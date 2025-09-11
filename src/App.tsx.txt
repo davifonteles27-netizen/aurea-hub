@@ -1,0 +1,2543 @@
+'use client'
+import React, { useEffect, useState, useMemo, useCallback, useRef, createContext, useContext } from 'react';
+import * as LucideIcons from 'lucide-react';
+
+// ================================================================================= //
+// #region 📜 1. TYPE DEFINITIONS (TYPESCRIPT)
+// ================================================================================= //
+
+type ProfileKey = 'data_analyst' | 'market_forecaster' | 'performance_optimizer' | 'narrative_observer' | 'strategic_competitor' | 'ecosystem_analyst' | 'fantasy_strategist' | 'quantum_oracle';
+type SportKey = 'basketball' | 'football' | 'tennis';
+type SealType = 'strategic' | 'tactical' | 'historical' | 'editorial' | 'community_spotlight';
+type ChallengeType = 'archetype_duel' | 'oracle_prediction' | 'tactical_quiz' | 'strategic_debate' | 'pillar_challenge' | 'live_tactical_room' | 'custom';
+
+
+interface Profile {
+  name: string;
+  description: string;
+  icon: React.ElementType;
+  color: string;
+}
+
+interface Transaction {
+  id: string;
+  timestamp: string;
+  reason_code: string;
+  av_change: number;
+  context_id?: string;
+  description: string;
+}
+
+interface AureaValueHistoryPoint {
+  date: string;
+  value: number;
+}
+
+interface User {
+  id: string;
+  username: string;
+  sportPreferences: SportKey[];
+  aureaValue: number;
+  badges: string[];
+  profile: ProfileKey;
+  rank: number;
+  insightsShared: number;
+  predictionsMade: number;
+  challengesCompleted: number;
+  aureaValueHistory: AureaValueHistoryPoint[];
+  transactions: Transaction[];
+}
+
+interface Comment {
+  id: string;
+  author: string;
+  text: string;
+  date: string;
+  likes: number;
+}
+
+// ================================================================================= //
+// NEW CHALLENGE TYPE DEFINITIONS
+// ================================================================================= //
+interface MatchContext { match_id: string; competition: string; match_date: string; venue: string; }
+interface EntityData { entity_name: string; }
+
+interface QuizQuestion { id: string; question: string; options: { id: string; text: string; isCorrect?: boolean }[]; }
+interface DebateSide { id: string; title: string; supporters: string[]; }
+interface LiveMatchData { match_id: string; liveFeedUrl: string; }
+
+interface ChallengeBase {
+  challenge_id: string;
+  type: ChallengeType;
+  title: string;
+  description: string;
+  status: 'draft' | 'active' | 'completed' | 'archived';
+  created: string;
+  endDate: string;
+  avReward: number;
+  participantCount: number;
+  comments: Comment[];
+  result?: any;
+}
+
+interface OracleChallenge extends ChallengeBase {
+  type: 'oracle_prediction';
+  prediction: string;
+  verificationMetric: string;
+}
+
+interface QuizChallenge extends ChallengeBase {
+  type: 'tactical_quiz';
+  questions: QuizQuestion[];
+  sourceMaterialId: string; // Dossier/Newsletter ID
+  timeLimit: number; // in minutes
+}
+
+interface DebateChallenge extends ChallengeBase {
+  type: 'strategic_debate';
+  question: string;
+  sides: DebateSide[];
+  evaluationCriteria: string[];
+}
+
+interface PillarChallenge extends ChallengeBase {
+  type: 'pillar_challenge';
+  matchContext: MatchContext;
+  availablePillars: string[];
+  decisivePillar?: string;
+}
+
+interface DuelChallenge extends ChallengeBase {
+  type: 'archetype_duel';
+  entityX: EntityData;
+  entityY: EntityData;
+  winner?: string;
+}
+
+interface LiveChallenge extends ChallengeBase {
+  type: 'live_tactical_room';
+  match: LiveMatchData;
+  maxParticipants: number;
+  participants: string[];
+}
+
+type GenericChallenge = OracleChallenge | QuizChallenge | DebateChallenge | PillarChallenge | DuelChallenge | LiveChallenge;
+
+// Merged the new challenge interfaces into the original `ArenaChallengeData` to avoid breaking changes
+interface ArenaChallengeData extends GenericChallenge {}
+
+interface DossierData {
+    dossier_id: string;
+    creation_timestamp: string;
+    match_context: { match_id: string; competition: string; match_date: string; venue: string; };
+    entity_X: { entity_name: string; };
+    entity_Y: { entity_name: string; };
+    narrative_context: { primary_narrative_arc: string; key_battle_insights?: { battle_title: string; decisive_insight: string; }[]; };
+    strategic_verdict: { analytical_overview: string; win_condition_entity_X: string; win_condition_entity_Y: string; decisive_battle: string; };
+    seal?: SealType;
+}
+
+interface NewsletterData {
+    title: string;
+    sections: { section_title: string; section_content: string; }[];
+    sport: SportKey;
+    league: string;
+    seal?: SealType;
+}
+
+interface PollData {
+    poll_id: string;
+    question: string;
+    options: { id: string; text: string; }[];
+    votes: Record<string, number>;
+    isClosed: boolean;
+    link: string;
+}
+
+interface SurveyData {
+    survey_id: string;
+    topic: string;
+    description: string;
+    link: string;
+}
+
+type ProductData = DossierData | NewsletterData | ArenaChallengeData | PollData | SurveyData;
+
+interface NexusProduct {
+    product: 'Dossier' | 'Newsletter' | 'ArenaChallenge' | 'POLL' | 'SURVEY';
+    hub_destination: 'CHRONICLES' | 'PORTAL' | 'SANCTUARY';
+    nexus_timestamp: string;
+    data: ProductData;
+}
+
+interface ManifestationNexus {
+    nexus_id: string;
+    nexus_timestamp: string;
+    nexus_products: NexusProduct[];
+    hub_update_payload: {
+        leaderboard_snapshot: { username: string; aureaValue: number; }[];
+    };
+}
+
+interface Notification {
+    id: number;
+    message: string;
+    read: boolean;
+}
+
+interface ChallengeTemplate {
+    id: string;
+    name: string;
+    description: string;
+    type: ChallengeType;
+    icon: React.ElementType;
+}
+
+
+// #endregion
+
+// ================================================================================= //
+// #region ✨ 2. GLOBAL STYLES & CONFIGURATION
+// ================================================================================= //
+
+const GlobalStyles = () => (
+  <>
+    <style>{`
+      @import url('https://api.fontshare.com/v2/css?f[]=satoshi@700,500,400&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&display=swap');
+      
+      :root {
+        --aurea-bg-dark: #0A0A12;
+        --aurea-bg-darker: #050508;
+        --aurea-text-primary: #FFFFFF;
+        --aurea-text-secondary: #A1A1AA;
+        --aurea-text-tertiary: #71717A;
+        --aurea-accent-primary: #7CA4E5;
+        --aurea-accent-primary-rgb: 124, 164, 229;
+        --aurea-accent-secondary: #8B5CF6;
+        --aurea-accent-tertiary: #EC4899;
+        --aurea-accent-community: #3B82F6;
+        --aurea-accent-editorial: #F43F5E;
+        --aurea-border: rgba(255, 255, 255, 0.1);
+        --aurea-card-bg: rgba(20, 20, 30, 0.6);
+        --aurea-overlay-bg: rgba(10, 10, 18, 0.95);
+        --aurea-modal-bg: rgba(15, 15, 25, 0.85);
+      }
+      
+      body {
+        background-color: var(--aurea-bg-dark);
+        color: var(--aurea-text-primary);
+        font-family: 'Inter', 'Satoshi', -apple-system, BlinkMacSystemFont, sans-serif;
+        line-height: 1.5;
+        overflow-x: hidden;
+        font-size: 0.9rem;
+      }
+      
+      .quantum-grid {
+        background-image: 
+          radial-gradient(circle at 15% 50%, rgba(var(--aurea-accent-primary-rgb), 0.08) 0%, transparent 25%),
+          radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.08) 0%, transparent 25%),
+          linear-gradient(rgba(10, 10, 18, 0.99), rgba(10, 10, 18, 0.99));
+      }
+      
+      .glass-effect {
+        background: var(--aurea-card-bg);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid var(--aurea-border);
+      }
+
+      .modal-panel-effect {
+        background: var(--aurea-modal-bg);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border: 1px solid var(--aurea-border);
+      }
+      
+      .gradient-text {
+        background: linear-gradient(135deg, var(--aurea-accent-secondary), var(--aurea-accent-primary));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+      
+      .btn-primary {
+        background: linear-gradient(135deg, var(--aurea-accent-primary), var(--aurea-accent-secondary));
+        color: white;
+        font-weight: 600;
+        padding: 0.6rem 1.2rem;
+        border-radius: 0.6rem;
+        transition: all 0.3s ease;
+        box-shadow: 0 3px 10px rgba(var(--aurea-accent-primary-rgb), 0.25);
+      }
+      
+      .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 14px rgba(var(--aurea-accent-primary-rgb), 0.35);
+      }
+      
+      .btn-secondary {
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--aurea-text-primary);
+        border: 1px solid var(--aurea-border);
+        font-weight: 500;
+        padding: 0.6rem 1.2rem;
+        border-radius: 0.6rem;
+        transition: all 0.3s ease;
+      }
+      
+      .btn-secondary:hover {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: var(--aurea-accent-primary);
+      }
+
+      .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+      .line-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+      
+      .scrollbar-hide::-webkit-scrollbar { display: none; }
+      .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+      
+      .safe-area-inset-bottom { padding-bottom: env(safe-area-inset-bottom, 18px); }
+
+      .card-hover {
+        transition: all 0.3s ease;
+        position: relative;
+      }
+      .card-hover:hover {
+        transform: translateY(-4px);
+        border-color: var(--aurea-accent-primary);
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2), 0 0 18px rgba(var(--aurea-accent-primary-rgb), 0.15);
+      }
+
+      .card-hover::before {
+        content: "";
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        border-radius: inherit;
+        background: radial-gradient(circle at var(--mouse-x) var(--mouse-y), rgba(255, 255, 255, 0.1), transparent 30%);
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        pointer-events: none;
+      }
+      .card-hover:hover::before {
+        opacity: 1;
+      }
+
+      .animated-underline { position: relative; display: inline-block; }
+      .animated-underline::after {
+        content: '';
+        position: absolute;
+        width: 100%;
+        transform: scaleX(0);
+        height: 2px;
+        bottom: -2px;
+        left: 0;
+        background-color: var(--aurea-accent-primary);
+        transform-origin: bottom right;
+        transition: transform 0.25s ease-out;
+      }
+      .animated-underline:hover::after { transform: scaleX(1); transform-origin: bottom left; }
+      
+      @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes fadeOut { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(8px); } }
+      @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+      @keyframes logoGlow { from { filter: drop-shadow(0 0 2px rgba(var(--aurea-accent-primary-rgb), 0.3)); } to { filter: drop-shadow(0 0 5px rgba(var(--aurea-accent-primary-rgb), 0.6)); } }
+      @keyframes pulseOnce { 0% { transform: scale(1); } 50% { transform: scale(1.15); } 100% { transform: scale(1); } }
+      
+      // New animations
+      @keyframes shimmer {
+        0% { background-position: -200px 0; }
+        100% { background-position: calc(200px + 100%) 0; }
+      }
+      
+      @keyframes slideInRight {
+        from { transform: translateX(20px); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+      }
+      
+      @keyframes slideInUp {
+        from { transform: translateY(20px); opacity: 0; }
+        to { transform: translateY(0); opacity: 1; }
+      }
+      
+      @keyframes scaleIn {
+        from { transform: scale(0.9); opacity: 0; }
+        to { transform: scale(1); opacity: 1; }
+      }
+      
+      .text-contrast { text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
+      .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
+      .animate-fade-out { animation: fadeOut 0.5s ease-out forwards; }
+      .animate-float { animation: float 3s ease-in-out infinite; }
+      .animate-logo-glow { animation: logoGlow 2s ease-in-out infinite alternate; }
+      .animate-pulse-once { animation: pulseOnce 0.5s ease; }
+      .animate-shimmer {
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.2) 50%, rgba(255, 255, 255, 0.1) 100%);
+        background-size: 200px 100%;
+        animation: shimmer 1.5s infinite;
+      }
+      
+      .animate-slide-in-right {
+        animation: slideInRight 0.3s ease-out forwards;
+      }
+      
+      .animate-slide-in-up {
+        animation: slideInUp 0.4s ease-out forwards;
+      }
+      
+      .animate-scale-in {
+        animation: scaleIn 0.2s ease-out forwards;
+      }
+      
+      .hover-glow-effect:hover {
+        box-shadow: 0 0 15px rgba(var(--aurea-accent-primary-rgb), 0.4);
+      }
+      
+      .smooth-focus {
+        transition: all 0.2s ease;
+      }
+      
+      .smooth-focus:focus {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      }
+    `}</style>
+  </>
+);
+
+// #endregion
+
+// ================================================================================= //
+// #region 📦 3. MOCK DATA & CONSTANTS
+// ================================================================================= //
+
+const PROFILES: Record<ProfileKey, Profile> = {
+  'data_analyst': { name: 'Data Analyst', description: 'Deciphers victory through data and models.', icon: LucideIcons.Target, color: '#3B82F6' },
+  'market_forecaster': { name: 'Market Forecaster', description: 'Forecasts market shifts and match outcomes.', icon: LucideIcons.Award, color: '#8B5CF6' },
+  'performance_optimizer': { name: 'Performance Optimizer', description: 'Pinpoints tactical and performance upgrades.', icon: LucideIcons.BarChart, color: '#10B981' },
+  'narrative_observer': { name: 'Narrative Observer', description: 'Decodes the narratives that shape the game.', icon: LucideIcons.Book, color: '#F59E0B' },
+  'strategic_competitor': { name: 'Strategic Competitor', description: 'Excels through tactical wit and competition.', icon: LucideIcons.Sword, color: '#EF4444' },
+  'ecosystem_analyst': { name: 'Ecosystem Analyst', description: 'Maps the interplay of teams and markets.', icon: LucideIcons.Users, color: '#3B82F6' },
+  'fantasy_strategist': { name: 'Fantasy Strategist', description: 'Uses analytics to build winning fantasy teams.', icon: LucideIcons.Star, color: '#EC4899' },
+  'quantum_oracle': { name: 'Quantum Oracle', description: 'Synthesizes all data into a unified vision.', icon: LucideIcons.Crown, color: '#F43F5E' },
+};
+
+const SPORTS: Record<SportKey, { name: string; icon: string }> = {
+  basketball: { name: 'Basketball', icon: '🏀' },
+  football: { name: 'Football', icon: '⚽' },
+  tennis: { name: 'Tennis', icon: '🎾' },
+};
+
+const emptyNexus: ManifestationNexus = {
+    nexus_id: "nexus_initial_empty_state",
+    nexus_timestamp: new Date().toISOString(),
+    nexus_products: [],
+    hub_update_payload: {
+        leaderboard_snapshot: []
+    }
+};
+
+const mockUser: User = {
+  id: 'user_12345',
+  username: 'QuantumLeaper',
+  sportPreferences: [],
+  aureaValue: 0,
+  badges: [],
+  profile: 'data_analyst',
+  rank: 0,
+  insightsShared: 0,
+  predictionsMade: 0,
+  challengesCompleted: 0,
+  aureaValueHistory: [{ date: new Date().toISOString().slice(0, 10), value: 0 }],
+  transactions: []
+};
+
+const LEVELS = [
+  { title: 'Novice', minAV: 0, color: '#94A3B8' },
+  { title: 'Analyst', minAV: 500, color: '#5EEAD4' },
+  { title: 'Strategist', minAV: 1500, color: '#FFC72C' },
+  { title: 'Oracle', minAV: 3000, color: '#F472B6' },
+];
+
+const BADGES = {
+  first_insight: { name: 'First Insight', avReward: 50, description: 'Shared your first insight', icon: LucideIcons.Star },
+  challenge_champion: { name: 'Challenge Champion', avReward: 150, description: 'Won 5 competitive challenges', icon: LucideIcons.Medal },
+};
+
+const SEAL_OPTIONS: SealType[] = ['strategic', 'tactical', 'historical', 'editorial', 'community_spotlight'];
+
+const CHALLENGE_TEMPLATES: ChallengeTemplate[] = [
+    { id: 'template_oracle', name: 'Oracle Prediction', description: 'Long-term challenge with Aurea prediction.', type: 'oracle_prediction', icon: LucideIcons.Crown },
+    { id: 'template_quiz', name: 'Tactical Quiz', description: 'Questionnaire based on recent content.', type: 'tactical_quiz', icon: LucideIcons.Lightbulb },
+    { id: 'template_debate', name: 'Strategic Debate', description: 'Discussion with evidence-based argumentation.', type: 'strategic_debate', icon: LucideIcons.MessageCircle },
+    { id: 'template_pilar', name: 'Pillar Challenge', description: 'Bet on the decisive pillar of a confrontation.', type: 'pillar_challenge', icon: LucideIcons.Columns },
+    { id: 'template_duelo', name: 'Archetype Duel', description: 'Classic prediction challenge based on a Dossier.', type: 'archetype_duel', icon: LucideIcons.Swords },
+    { id: 'template_live', name: 'Live Tactical Room', description: 'Interactive experience during live games.', type: 'live_tactical_room', icon: LucideIcons.Radio },
+    { id: 'template_custom', name: 'Custom Challenge', description: 'Full manual configuration.', type: 'custom', icon: LucideIcons.Settings },
+];
+
+// #endregion
+
+// ================================================================================= //
+// #region 🛠️ 4. UTILITY FUNCTIONS & CUSTOM HOOKS
+// ================================================================================= //
+const usePersistentState = <T,>(key: string, defaultValue: T): [T, React.Dispatch<React.SetStateAction<T>>] => {
+    const [state, setState] = useState<T>(() => {
+        try {
+            const storedValue = window.localStorage.getItem(key);
+            return storedValue ? JSON.parse(storedValue) : defaultValue;
+        } catch (error) {
+            console.error(`Error reading localStorage key “${key}”:`, error);
+            return defaultValue;
+        }
+    });
+
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(key, JSON.stringify(state));
+        } catch (error) {
+            console.error(`Error setting localStorage key “${key}”:`, error);
+        }
+    }, [key, state]);
+
+    return [state, setState];
+};
+
+const getLocalUser = (): User | null => {
+  try {
+    if (typeof window !== 'undefined') {
+      const userString = localStorage.getItem('aureaHubUser');
+      return userString ? JSON.parse(userString) : null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const setLocalUser = (user: User) => {
+  try {
+    localStorage.setItem('aureaHubUser', JSON.stringify(user));
+  } catch (error) {
+    console.error('Error saving user:', error);
+  }
+};
+
+const removeLocalUser = () => {
+  try {
+    localStorage.removeItem('aureaHubUser');
+  } catch (error) {
+    console.error('Error removing user:', error);
+  }
+};
+
+const getUserLevel = (aureaValue: number) => {
+  return LEVELS.slice().reverse().find(level => aureaValue >= level.minAV) || LEVELS[0];
+};
+
+const useCardShine = () => {
+    const cardRef = useRef<HTMLElement>(null);
+    useEffect(() => {
+        const card = cardRef.current;
+        if (!card) return;
+        const handleMouseMove = (e: MouseEvent) => {
+            const rect = card.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            card.style.setProperty('--mouse-x', `${x}px`);
+            card.style.setProperty('--mouse-y', `${y}px`);
+        };
+        card.addEventListener('mousemove', handleMouseMove);
+        return () => card.removeEventListener('mousemove', handleMouseMove);
+    }, []);
+    return cardRef;
+};
+
+// #endregion
+
+// ================================================================================= //
+// #region ⚙️ 5. STATE MANAGEMENT (CONTEXT API)
+// ================================================================================= //
+
+// --- Auth Context ---
+interface AuthContextType {
+  user: User | null;
+  isLoggedIn: boolean;
+  login: (asGuest: boolean, username?: string, password?: string) => void;
+  logout: () => void;
+  updateUser: (updatedUser: User) => void;
+}
+const AuthContext = createContext<AuthContextType | null>(null);
+
+const AuthProvider = ({ children, onAdminLogin }: { children: React.ReactNode, onAdminLogin: () => void }) => {
+  const [user, setUser] = usePersistentState<User | null>('aureaHubUser', null);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      setIsLoggedIn(true);
+    } else {
+      setIsLoggedIn(false);
+    }
+  }, [user]);
+
+  const login = (asGuest: boolean, username?: string, password?: string) => {
+    if (!asGuest && username === 'admin' && password === 'aurea-admin-2025') {
+        onAdminLogin();
+        return;
+    }
+
+    const newUser: User = { ...mockUser, id: `user_${Date.now()}`, username: `User_${Math.random().toString(36).slice(2, 8)}` };
+    setUser(newUser);
+  };
+
+  const logout = () => {
+    setUser(null);
+  };
+
+  const updateUser = (updatedUser: User) => {
+    setUser(updatedUser);
+  };
+  
+  return <AuthContext.Provider value={{ user, isLoggedIn, login, logout, updateUser }}>{children}</AuthContext.Provider>;
+};
+const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error("useAuth must be used within an AuthProvider");
+  return context;
+};
+
+// --- Data Context ---
+interface DataContextType {
+  nexusData: ManifestationNexus;
+  setNexusData: React.Dispatch<React.SetStateAction<ManifestationNexus>>;
+  addComment: (challengeId: string, text: string) => void;
+  likeComment: (challengeId: string, commentId: string) => void;
+  addProduct: (newProduct: NexusProduct) => void;
+  archiveProduct: (productId: string, seal: SealType) => void;
+}
+const DataContext = createContext<DataContextType | null>(null);
+
+const DataProvider = ({ children }: { children: React.ReactNode }) => {
+  const [nexusData, setNexusData] = usePersistentState<ManifestationNexus>('aureaNexusData', emptyNexus);
+  const { user } = useAuth();
+
+  const addComment = useCallback((challengeId: string, text: string) => {
+    if (!user) return;
+    setNexusData(prevData => ({
+        ...prevData,
+        nexus_products: prevData.nexus_products.map(p => {
+            if (p.product === 'ArenaChallenge' && (p.data as ArenaChallengeData).challenge_id === challengeId) {
+                const newComment: Comment = { id: `comment_${Date.now()}`, author: user.username, text, date: new Date().toISOString(), likes: 0 };
+                return { ...p, data: { ...p.data, comments: [...(p.data as ArenaChallengeData).comments, newComment] } };
+            }
+            return p;
+        })
+    }));
+  }, [user, setNexusData]);
+
+  const likeComment = useCallback((challengeId: string, commentId: string) => {
+    // Implementation not shown for brevity
+  }, [setNexusData]);
+
+  const addProduct = useCallback((newProduct: NexusProduct) => {
+    setNexusData(prevData => ({
+      ...prevData,
+      nexus_products: [newProduct, ...prevData.nexus_products]
+    }));
+  }, [setNexusData]);
+
+  const archiveProduct = useCallback((productId: string, seal: SealType) => {
+    setNexusData(prevData => ({
+        ...prevData,
+        nexus_products: prevData.nexus_products.map(p => {
+            const pId = (p.data as any).dossier_id || (p.data as any).newsletter_id;
+            if (pId === productId) {
+                return { ...p, hub_destination: 'SANCTUARY', data: { ...p.data, seal } };
+            }
+            return p;
+        })
+    }))
+  }, [setNexusData]);
+
+  return <DataContext.Provider value={{ nexusData, setNexusData, addComment, likeComment, addProduct, archiveProduct }}>{children}</DataContext.Provider>;
+};
+const useData = () => {
+  const context = useContext(DataContext);
+  if (!context) throw new Error("useData must be used within a DataProvider");
+  return context;
+};
+
+// --- Notifications Context ---
+interface Toast {
+    id: number;
+    message: string;
+    type: 'success' | 'error';
+}
+interface NotificationsContextType {
+  addToast: (message: string, type?: 'success' | 'error') => void;
+}
+const NotificationsContext = createContext<NotificationsContextType | null>(null);
+
+const NotificationsProvider = ({ children }: { children: React.ReactNode }) => {
+    const [toasts, setToasts] = useState<Toast[]>([]);
+    
+    const addToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
+        const id = Date.now();
+        setToasts(prev => [...prev, { id, message, type }]);
+        setTimeout(() => {
+            setToasts(currentToasts => currentToasts.filter(toast => toast.id !== id));
+        }, 5000);
+    }, []);
+
+    return (
+        <NotificationsContext.Provider value={{ addToast }}>
+            {children}
+            <div className="fixed bottom-5 right-5 z-[100] space-y-2">
+                {toasts.map(toast => (
+                    <div key={toast.id} className={`flex items-center space-x-2 p-3 rounded-lg shadow-lg text-white animate-fade-in ${toast.type === 'success' ? 'bg-green-600/80' : 'bg-red-600/80'} backdrop-blur-sm`}>
+                        {toast.type === 'success' ? <LucideIcons.CheckCircle size={20} /> : <LucideIcons.AlertTriangle size={20} />}
+                        <span className="text-sm font-medium">{toast.message}</span>
+                    </div>
+                ))}
+            </div>
+        </NotificationsContext.Provider>
+    );
+};
+const useNotifications = () => {
+    const context = useContext(NotificationsContext);
+    if (!context) throw new Error("useNotifications must be used within a NotificationsProvider");
+    return context;
+};
+
+// #endregion
+
+// ================================================================================= //
+// #region 🎨 6. UI & LAYOUT COMPONENTS
+// ================================================================================= //
+
+// --- Icon Components ---
+const AureaLogoIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
+  <svg {...props} viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'>
+    <circle cx='12' cy='12' r='8' stroke='currentColor' strokeWidth='0.8' />
+    <path d='M12 8 L9 16 M12 8 L15 16 M10 14 L14 14' stroke='currentColor' strokeWidth='0.8' strokeLinecap='round' strokeLinejoin='round' />
+    <path d='M12 4 L12 8 M12 20 L12 16 M4 12 L8 12 M20 12 L16 12' stroke='currentColor' strokeWidth='0.8' strokeLinecap='round'/>
+  </svg>
+);
+const DossierIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
+  <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" />
+    <path d="M14 2v6h6" />
+    <path d="M12 18.5l-3.13 1.75.59-3.48-2.53-2.47 3.5-.51L12 10.5l1.57 3.29 3.5.51-2.53 2.47.59 3.48L12 18.5z" />
+  </svg>
+);
+const NewsletterIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
+  <svg {...props} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" />
+    <path d="M14 2v6h6" />
+    <path d="M16 13H8" /> <path d="M16 17H8" /> <path d="M10 9H8" />
+  </svg>
+);
+
+// --- General UI Components ---
+const LoadingSpinner = React.memo(({ size = 'medium', className = '' }: { size?: 'small' | 'medium' | 'large'; className?: string }) => {
+  const sizeClasses = { small: 'w-4 h-4', medium: 'w-8 h-8', large: 'w-12 h-12' };
+  return <div className={`${sizeClasses[size]} border-2 border-[color:var(--aurea-accent-primary)]/30 border-t-[color:var(--aurea-accent-primary)] rounded-full animate-spin ${className}`}></div>;
+});
+
+interface HeaderProps { currentPage: string; onNavigate: (page: string) => void; }
+const Header: React.FC<HeaderProps> = ({ currentPage, onNavigate }) => {
+    const { user, isLoggedIn, logout } = useAuth();
+    const [showUserMenu, setShowUserMenu] = useState(false);
+    const [showNotifications, setShowNotifications] = useState(false);
+    const [notifications, setNotifications] = useState<Notification[]>([
+        { id: 1, message: 'Welcome to Aurea Hub!', read: false },
+        { id: 2, message: 'New challenge available in the Arena', read: false },
+    ]);
+
+    const unreadCount = notifications.filter(n => !n.read).length;
+
+    const handleBellClick = () => {
+        setShowNotifications(!showNotifications);
+        if (!showNotifications) {
+            // Mark as read after 2 seconds
+            setTimeout(() => {
+                setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+            }, 2000);
+        }
+    };
+
+    const addNotification = (message: string) => {
+        const newNotification = { 
+            id: Date.now(), 
+            message, 
+            read: false 
+        };
+        setNotifications(prev => [newNotification, ...prev]);
+    };
+
+    const markNotificationsAsRead = () => {
+        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    };
+
+    const pageTitles: Record<string, string> = { home: 'Home', chronicles: 'Chronicles', portal: 'Portal', sanctuary: 'Sanctuary', profile: 'My Space', admin: 'Admin Nexus', welcome: 'Welcome' };
+    
+    return (
+      <header className="fixed top-0 left-0 right-0 z-50 glass-effect border-b border-transparent">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-14">
+            <button onClick={() => onNavigate('home')} className="flex items-center space-x-2 text-white hover:opacity-80 transition-opacity">
+              <div className={`w-7 h-7 flex items-center justify-center ${currentPage !== 'home' ? 'animate-logo-glow' : ''}`}>
+                <AureaLogoIcon className="text-[color:var(--aurea-accent-primary)] w-[22px] h-[22px]" />
+              </div>
+              <span className="font-sans font-bold text-base gradient-text">Aurea Hub</span>
+            </button>
+            
+            <h1 className="font-sans text-lg text-[color:var(--aurea-text-primary)] font-semibold absolute left-1/2 transform -translate-x-1/2 hidden md:block">
+                {pageTitles[currentPage]}
+            </h1>
+            
+            {isLoggedIn && user && (
+                <div className="flex items-center space-x-2">
+                    <div className="relative">
+                        <button onClick={handleBellClick} className="p-1.5 rounded-md hover:bg-white/5 transition-colors relative">
+                            <LucideIcons.Bell size={20} className="text-[color:var(--aurea-text-secondary)]" />
+                            {unreadCount > 0 && (
+                                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center">
+                                    {unreadCount}
+                                </span>
+                            )}
+                        </button>
+                        
+                        {showNotifications && (
+                            <div className="absolute right-0 top-full mt-2 w-72 bg-[color:var(--aurea-bg-dark)] rounded-md border border-[color:var(--aurea-border)] shadow-lg glass-effect animate-fade-in z-60">
+                                <div className="p-3 font-semibold border-b border-[color:var(--aurea-border)] text-sm text-[color:var(--aurea-text-primary)]">
+                                    Notifications
+                                </div>
+                                <ul className="max-h-80 overflow-y-auto p-1.5 scrollbar-hide">
+                                    {notifications.length > 0 ? notifications.map(n => (
+                                        <li key={n.id} className={`p-2 text-sm border-b border-white/5 ${n.read ? 'text-[color:var(--aurea-text-secondary)]' : 'text-[color:var(--aurea-text-primary)]'}`}>
+                                            {n.message}
+                                        </li>
+                                    )) : (
+                                        <li className="p-3 text-sm text-[color:var(--aurea-text-secondary)] text-center">
+                                            No new notifications.
+                                        </li>
+                                    )}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+                    
+                    <div className="relative">
+                        <button onClick={() => setShowUserMenu(!showUserMenu)} className="flex items-center space-x-2 p-1.5 rounded-md hover:bg-white/5 transition-colors">
+                            <div className="w-7 h-7 bg-gradient-to-br from-[color:var(--aurea-accent-tertiary)]/20 to-[color:var(--aurea-accent-primary)]/20 rounded-full flex items-center justify-center border border-[color:var(--aurea-accent-tertiary)]/30">
+                                <LucideIcons.User size={14} className="text-[color:var(--aurea-accent-tertiary)]" />
+                            </div>
+                            <span className="text-sm text-[color:var(--aurea-text-secondary)] hidden sm:block">@{user.username}</span>
+                            <LucideIcons.ChevronDown size={14} className="text-[color:var(--aurea-text-secondary)]" />
+                        </button>
+                        
+                        {showUserMenu && (
+                            <div className="absolute right-0 top-full mt-2 w-44 rounded-md border border-[color:var(--aurea-border)] shadow-lg modal-panel-effect animate-fade-in z-60">
+                                <div className="p-3 border-b border-[color:var(--aurea-border)]">
+                                    <p className="text-sm text-[color:var(--aurea-text-primary)]">@{user.username}</p>
+                                    <p className="text-xs text-[color:var(--aurea-accent-secondary)]">{getUserLevel(user.aureaValue).title}</p>
+                                </div>
+                                <div className="p-1.5">
+                                    <button onClick={() => { onNavigate('profile'); setShowUserMenu(false); }} className="w-full text-left px-2 py-1.5 text-sm text-[color:var(--aurea-text-primary)] hover:bg-white/5 rounded-md transition-colors">
+                                        My Space
+                                    </button>
+                                    <button onClick={() => { logout(); setShowUserMenu(false); }} className="w-full text-left px-2 py-1.5 text-sm text-red-400 hover:bg-red-400/10 rounded-md transition-colors">
+                                        Logout
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+          </div>
+        </div>
+      </header>
+    );
+};
+
+interface BottomNavigationProps { activePage: string; navigateTo: (page: string) => void; }
+const BottomNavigation: React.FC<BottomNavigationProps> = ({ activePage, navigateTo }) => {
+  const navItems = [{ name: 'Chronicles', page: 'chronicles', icon: LucideIcons.Archive }, { name: 'Portal', page: 'portal', icon: LucideIcons.Swords }, { name: 'Sanctuary', page: 'sanctuary', icon: LucideIcons.Book }];
+  return (
+    <nav className="fixed bottom-3 left-1/2 transform -translate-x-1/2 bg-black/40 backdrop-blur-md border border-[color:var(--aurea-border)] rounded-xl p-1.5 z-40 glass-effect shadow-xl safe-area-inset-bottom">
+      <div className="flex space-x-1">
+        {navItems.map((item) => {
+          const isActive = activePage === item.page;
+          const IconComponent = item.icon;
+          return (
+            <button key={item.name} onClick={() => navigateTo(item.page)} className={`p-2.5 rounded-lg flex flex-col items-center transition-all duration-300 w-20 relative group ${isActive ? 'bg-[color:var(--aurea-accent-primary)] text-[color:var(--aurea-bg-dark)]' : 'text-[color:var(--aurea-text-secondary)] hover:text-[color:var(--aurea-text-primary)] hover:bg-white/5'}`}>
+              <IconComponent size={18} />
+              <span className="text-xs mt-1 font-semibold">{item.name}</span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+};
+
+// #endregion
+
+// ================================================================================= //
+// #region 📄 7. PAGE & PAGE-SPECIFIC COMPONENTS
+// ================================================================================= //
+
+// --- Login Page ---
+const LoginScreen = () => {
+  const { login } = useAuth();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const handleLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!username || !password) {
+        setError("Please enter username and password.");
+        return;
+    }
+    if (username === 'admin' && password === 'aurea-admin-2025') {
+        login(false, username, password);
+    } else {
+        setError("Invalid credentials.");
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 quantum-grid animate-fade-in">
+      <div className="text-center max-w-sm w-full mx-auto glass-effect rounded-2xl p-7 border-transparent">
+        <div className="mb-6 animate-float">
+          <div className="w-20 h-20 bg-gradient-to-br from-[color:var(--aurea-accent-secondary)]/30 to-[color:var(--aurea-accent-primary)]/30 rounded-2xl mx-auto flex items-center justify-center shadow-lg relative">
+            <div className="absolute inset-0 bg-[color:var(--aurea-accent-primary)] rounded-2xl blur-xl opacity-30"></div>
+            <AureaLogoIcon className="text-white relative z-10 w-11 h-11" style={{ filter: 'drop-shadow(0 0 8px rgba(var(--aurea-accent-primary-rgb), 0.6))' }} />
+          </div>
+        </div>
+        <h1 className="font-sans text-3xl text-white mb-2 font-bold gradient-text">Aurea Hub</h1>
+        <p className="text-[color:var(--aurea-text-secondary)] mb-7 text-base">The Nexus of Sports Intelligence</p>
+        
+        <form onSubmit={handleLoginSubmit} className="space-y-4 mb-4">
+            <input 
+              type="text"
+              placeholder="Username"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              className="w-full p-2.5 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)] focus:outline-none focus:border-[color:var(--aurea-accent-secondary)]/50"
+            />
+            <input 
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="w-full p-2.5 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)] focus:outline-none focus:border-[color:var(--aurea-accent-secondary)]/50"
+            />
+            {error && <p className="text-red-400 text-sm">{error}</p>}
+            <button type="submit" className="btn-primary w-full">Login</button>
+        </form>
+
+        <div className="flex items-center my-4">
+            <div className="flex-grow border-t border-[color:var(--aurea-border)]"></div>
+            <span className="flex-shrink mx-2 text-xs text-[color:var(--aurea-text-tertiary)]">OR</span>
+            <div className="flex-grow border-t border-[color:var(--aurea-border)]"></div>
+        </div>
+
+        <button onClick={() => login(true)} className="btn-secondary w-full">Enter as Guest</button>
+      </div>
+    </div>
+  );
+};
+
+// --- Welcome/Home Page ---
+interface SportSelectionCardProps { sport: SportKey; selected: boolean; onToggle: (sport: SportKey) => void; maxReached: boolean; }
+const SportSelectionCard: React.FC<SportSelectionCardProps> = React.memo(({ sport, selected, onToggle, maxReached }) => {
+    const sportData = SPORTS[sport];
+    return (
+      <button onClick={() => onToggle(sport)} disabled={maxReached && !selected} className={`p-5 rounded-xl border-2 transition-all duration-300 flex flex-col items-center justify-center space-y-2 group relative overflow-hidden ${selected ? 'bg-gradient-to-br from-[color:var(--aurea-accent-secondary)]/20 to-[color:var(--aurea-accent-primary)]/20 border-[color:var(--aurea-accent-primary)] shadow-lg shadow-[color:var(--aurea-accent-primary)]/20' : 'bg-white/5 border-transparent hover:border-[color:var(--aurea-accent-primary)]/50'} ${maxReached && !selected ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'}`}>
+        {selected && (<div className="absolute top-2 right-2 w-5 h-5 bg-[color:var(--aurea-accent-primary)] rounded-full flex items-center justify-center"><LucideIcons.Check size={12} className="text-[color:var(--aurea-bg-dark)]" /></div>)}
+        <div className="text-3xl transform group-hover:scale-110 transition-transform duration-300">{sportData.icon}</div>
+        <span className="font-sans text-sm text-[color:var(--aurea-text-secondary)] group-hover:text-[color:var(--aurea-accent-primary)] transition-colors font-medium">{sportData.name}</span>
+      </button>
+    );
+});
+
+interface HomePageProps { onNavigate: (page: string) => void; }
+const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
+    const { user, updateUser } = useAuth();
+    const [selectedSports, setSelectedSports] = useState<SportKey[]>(user?.sportPreferences || []);
+    const maxSports = 3;
+
+    const handleSportToggle = (sport: SportKey) => {
+        setSelectedSports(prev => {
+            if (prev.includes(sport)) return prev.filter(s => s !== sport);
+            if (prev.length < maxSports) return [...prev, sport];
+            return prev;
+        });
+    };
+
+    const handleContinue = () => {
+        if (selectedSports.length === 0 || !user) return;
+        const AV_PER_SPORT = 250;
+        const totalAV = selectedSports.length * AV_PER_SPORT;
+        const updatedUser: User = { 
+            ...user, 
+            sportPreferences: selectedSports, 
+            aureaValue: user.aureaValue + totalAV, 
+            aureaValueHistory: [...user.aureaValueHistory, { date: new Date().toISOString().slice(0, 10), value: user.aureaValue + totalAV }] 
+        };
+        updateUser(updatedUser);
+        onNavigate('chronicles');
+    };
+
+    return (
+        <div className="min-h-full flex-grow flex flex-col items-center justify-center p-4">
+          <div className="text-center max-w-xl w-full mx-auto glass-effect rounded-2xl p-7 border-transparent">
+            <h1 className="font-sans text-3xl text-white mb-3 font-bold gradient-text">Welcome to the Hub</h1>
+            <p className="text-base font-medium text-[color:var(--aurea-text-secondary)] mb-7">Select your favorite sports (up to {maxSports})</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-7">
+              {(Object.keys(SPORTS) as SportKey[]).map(sport => (
+                <SportSelectionCard key={sport} sport={sport} selected={selectedSports.includes(sport)} onToggle={handleSportToggle} maxReached={selectedSports.length >= maxSports && !selectedSports.includes(sport)} />
+              ))}
+            </div>
+            <button onClick={handleContinue} disabled={selectedSports.length === 0} className={`btn-primary w-full ${selectedSports.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}>
+              {selectedSports.length > 0 ? 'Continue to Chronicles' : 'Select at least 1 sport'}
+            </button>
+          </div>
+        </div>
+    );
+};
+
+// --- Chronicles Page & Components ---
+interface ContentCardProps { item: NexusProduct; onClick: () => void; style?: React.CSSProperties; }
+const ContentCard: React.FC<ContentCardProps> = React.memo(({ item, onClick, style }) => {
+    const cardRef = useCardShine();
+    const { title, overview } = useMemo(() => {
+        if (item.product === 'Dossier') {
+            const data = item.data as DossierData;
+            return { title: `${data.entity_X.entity_name} vs. ${data.entity_Y.entity_name}`, overview: data.strategic_verdict.analytical_overview };
+        }
+        if (item.product === 'Newsletter') {
+            const data = item.data as NewsletterData;
+            return { title: data.title, overview: data.sections?.[0]?.section_content ?? '' };
+        }
+        return { title: 'Content Unavailable', overview: '' };
+    }, [item]);
+
+    return (
+        <article ref={cardRef as React.RefObject<HTMLElement>} onClick={onClick} style={style} className="p-4 rounded-xl cursor-pointer transition-all duration-300 card-hover glass-effect group relative overflow-hidden animate-fade-in hover-glow-effect">
+            <h2 className="font-sans text-base text-[color:var(--aurea-text-primary)] mb-2 font-bold line-clamp-2 text-contrast relative z-10">{title}</h2>
+            <p className="text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-2 line-clamp-3 relative z-10">{overview}</p>
+        </article>
+    );
+});
+
+const CustomSelect = ({ options, value, onChange, placeholder, disabled = false }: { 
+    options: { value: string, label: string }[], 
+    value: string, 
+    onChange: (value: string) => void, 
+    placeholder: string, 
+    disabled?: boolean 
+}) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const wrapperRef = useRef<HTMLDivElement>(null);
+    
+    const handleSelect = (optionValue: string) => {
+        onChange(optionValue);
+        setIsOpen(false);
+    };
+    
+    useEffect(() => {
+        function handleClickOutside(event: MouseEvent) {
+            if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, [wrapperRef]);
+
+    const selectedOption = options.find(opt => opt.value === value);
+    
+    return (
+        <div className="relative" ref={wrapperRef}>
+            <button 
+                onClick={() => !disabled && setIsOpen(!isOpen)} 
+                disabled={disabled}
+                className={`w-full flex items-center justify-between bg-black/20 border border-[color:var(--aurea-border)] rounded-md p-2.5 text-sm transition-colors ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-[color:var(--aurea-accent-secondary)]/50 focus:outline-none focus:border-[color:var(--aurea-accent-secondary)]/50 smooth-focus'}`}
+            >
+                <span className={value ? 'text-[color:var(--aurea-text-primary)]' : 'text-[color:var(--aurea-text-secondary)]'}>
+                    {selectedOption?.label || placeholder}
+                </span>
+                <LucideIcons.ChevronDown size={14} className={`text-[color:var(--aurea-text-secondary)] transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+            </button>
+            
+            {isOpen && (
+                <div className="absolute top-full mt-1.5 w-full bg-[color:var(--aurea-bg-dark)] border border-[color:var(--aurea-border)] rounded-md z-10 shadow-lg overflow-hidden animate-fade-in">
+                    <ul className="max-h-40 overflow-y-auto scrollbar-hide">
+                        {options.map(option => (
+                            <li key={option.value}>
+                                <button 
+                                    onClick={() => handleSelect(option.value)}
+                                    className={`w-full text-left p-2.5 text-sm transition-colors ${value === option.value ? 'bg-[color:var(--aurea-accent-secondary)]/20 text-[color:var(--aurea-accent-secondary)]' : 'text-[color:var(--aurea-text-primary)] hover:bg-white/5'}`}
+                                >
+                                    {option.label}
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+        </div>
+    );
+};
+
+const FilterGrid = ({ filters, onFilterChange }: { filters: any, onFilterChange: (name: string, value: string) => void }) => {
+    const [isExpanded, setIsExpanded] = useState(false);
+    const sportOptions = [
+        { value: '', label: 'All' }, 
+        { value: 'basketball', label: 'Basketball' }, 
+        { value: 'football', label: 'Football' }, 
+        { value: 'tennis', label: 'Tennis' },
+    ];
+    
+    const leagueOptions = useMemo(() => {
+        if (filters.sport === 'basketball') return [{ value: 'nba', label: 'NBA' }];
+        if (filters.sport === 'football') return [{ value: 'premier_league', label: 'Premier League' }];
+        if (filters.sport === 'tennis') return [{ value: 'atp', label: 'ATP' }];
+        return [];
+    }, [filters.sport]);
+
+    const sealOptions = [
+        { value: '', label: 'All' }, 
+        { value: 'strategic', label: 'Strategic' }, 
+        { value: 'editorial', label: 'Editorial' }, 
+        { value: 'tactical', label: 'Tactical' }, 
+        { value: 'historical', label: 'Historical' },
+    ];
+
+    return (
+        <div className="mb-6">
+            <button 
+                onClick={() => setIsExpanded(!isExpanded)} 
+                className="flex items-center space-x-2 px-3 py-2.5 bg-white/5 rounded-lg border border-[color:var(--aurea-border)] hover:border-[color:var(--aurea-accent-primary)]/30 transition-colors mb-3 w-full"
+            >
+                <LucideIcons.Filter size={16} className="text-[color:var(--aurea-accent-secondary)]" />
+                <span className="text-[color:var(--aurea-text-primary)] font-medium text-sm">Filters</span>
+                <span className={`transform transition-transform ${isExpanded ? 'rotate-180' : ''} ml-auto`}>
+                    <LucideIcons.ChevronDown size={14} className="text-[color:var(--aurea-text-secondary)]" />
+                </span>
+            </button>
+            
+            {isExpanded && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-black/20 rounded-lg border border-[color:var(--aurea-border)] glass-effect animate-fade-in">
+                    <div>
+                        <label className="text-xs text-[color:var(--aurea-accent-secondary)] block mb-1.5 font-semibold">SPORT</label>
+                        <CustomSelect 
+                            placeholder="Select a sport" 
+                            options={sportOptions} 
+                            value={filters.sport} 
+                            onChange={(value) => onFilterChange('sport', value)} 
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs text-[color:var(--aurea-accent-secondary)] block mb-1.5 font-semibold">LEAGUE</label>
+                        <CustomSelect 
+                            placeholder="Select a league" 
+                            options={[{ value: '', label: 'All' }, ...leagueOptions]} 
+                            value={filters.league} 
+                            onChange={(value) => onFilterChange('league', value)} 
+                            disabled={!filters.sport}
+                        />
+                    </div>
+                    <div>
+                        <label className="text-xs text-[color:var(--aurea-accent-secondary)] block mb-1.5 font-semibold">SEAL</label>
+                        <CustomSelect 
+                            placeholder="Select a seal" 
+                            options={sealOptions} 
+                            value={filters.seal} 
+                            onChange={(value) => onFilterChange('seal', value)} 
+                        />
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+const ChroniclesPage = () => {
+    const { nexusData } = useData();
+    const [selectedContent, setSelectedContent] = useState<NexusProduct | null>(null);
+    const [filters, setFilters] = useState(() => {
+        const savedFilters = sessionStorage.getItem('chroniclesFilters');
+        return savedFilters ? JSON.parse(savedFilters) : { sport: '', league: '', seal: '' };
+    });
+    
+    useEffect(() => {
+        sessionStorage.setItem('chroniclesFilters', JSON.stringify(filters));
+    }, [filters]);
+
+    const handleFilterChange = useCallback((filterName: string, value: string) => {
+        setFilters(prevFilters => {
+            const newFilters = { ...prevFilters, [filterName]: value };
+            if (filterName === 'sport') {
+                newFilters.league = '';
+            }
+            return newFilters;
+        });
+    }, []);
+
+    const chroniclesProducts = useMemo(() => {
+        return nexusData.nexus_products.filter(p => p.hub_destination === 'CHRONICLES');
+    }, [nexusData]);
+
+    const filteredContent = useMemo(() => {
+        return chroniclesProducts.filter(item => {
+            const data = item.data as DossierData | NewsletterData;
+            const sport = 'match_context' in data ? 
+                (data.match_context.competition.toLowerCase().includes('nba') ? 'basketball' : 'football') : 
+                (data as NewsletterData).sport;
+            const league = 'match_context' in data ? 
+                data.match_context.competition : 
+                (data as NewsletterData).league;
+            const seal = 'strategic_verdict' in data ? 
+                'strategic' : 
+                (data as NewsletterData).seal;
+            
+            const matchesSport = !filters.sport || sport === filters.sport;
+            const matchesLeague = !filters.league || league === filters.league;
+            const matchesSeal = !filters.seal || seal === filters.seal;
+            
+            return matchesSport && matchesLeague && matchesSeal;
+        });
+    }, [chroniclesProducts, filters]);
+
+    return (
+        <>
+            <div className="max-w-3xl mx-auto px-4">
+                <p className="text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-6 text-center max-w-xl mx-auto">
+                    Where Strategy Becomes Insight.
+                </p>
+                
+                <FilterGrid filters={filters} onFilterChange={handleFilterChange} />
+                
+                <div className="grid grid-cols-1 gap-4">
+                    {filteredContent.map((item, index) => (
+                        <ContentCard 
+                            key={index} 
+                            item={item} 
+                            onClick={() => setSelectedContent(item)} 
+                            style={{ animationDelay: `${index * 100}ms`, opacity: 0 }} 
+                        />
+                    ))}
+                </div>
+            </div>
+            {selectedContent && <ContentOverlay content={selectedContent} onClose={() => setSelectedContent(null)} />}
+        </>
+    );
+};
+
+
+const ContentOverlay = ({ content, onClose }: { content: NexusProduct | null, onClose: () => void }) => {
+    if (!content) return null;
+    
+    const isDossier = content.product === 'Dossier';
+    const data = content.data as DossierData | NewsletterData;
+    
+    const renderDossierContent = (dossier: DossierData) => (
+        <>
+            <h1 className="font-sans text-2xl sm:text-3xl text-[color:var(--aurea-text-primary)] mb-3 font-bold">
+                {dossier.entity_X.entity_name} vs. {dossier.entity_Y.entity_name}
+            </h1>
+            
+            <div className="flex flex-wrap gap-2 mb-4">
+                <span className="text-xs font-medium px-2 py-1 rounded-full bg-[color:var(--aurea-accent-primary)]/20 text-[color:var(--aurea-accent-primary)]">
+                    {new Date(dossier.match_context.match_date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                </span>
+                <span className="text-xs font-medium px-2 py-1 rounded-full bg-[color:var(--aurea-accent-secondary)]/20 text-[color:var(--aurea-accent-secondary)]">
+                    {dossier.match_context.competition}
+                </span>
+                {dossier.match_context.venue && (
+                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-[color:var(--aurea-accent-tertiary)]/20 text-[color:var(--aurea-accent-tertiary)]">
+                        {dossier.match_context.venue}
+                    </span>
+                )}
+            </div>
+            
+            <div className="prose prose-invert max-w-none space-y-6">
+                <div className="bg-white/5 p-4 rounded-xl">
+                    <h3 className="text-lg font-semibold text-[color:var(--aurea-accent-primary)] mb-2">Analytical Overview</h3>
+                    <p className="leading-relaxed">{dossier.strategic_verdict.analytical_overview}</p>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-white/5 p-4 rounded-xl">
+                        <h3 className="text-lg font-semibold text-[color:var(--aurea-accent-secondary)] mb-2">
+                            Win Condition for {dossier.entity_X.entity_name}
+                        </h3>
+                        <p>{dossier.strategic_verdict.win_condition_entity_X}</p>
+                    </div>
+                    
+                    <div className="bg-white/5 p-4 rounded-xl">
+                        <h3 className="text-lg font-semibold text-[color:var(--aurea-accent-secondary)] mb-2">
+                            Win Condition for {dossier.entity_Y.entity_name}
+                        </h3>
+                        <p>{dossier.strategic_verdict.win_condition_entity_Y}</p>
+                    </div>
+                </div>
+                
+                {dossier.strategic_verdict.decisive_battle && (
+                    <div className="bg-white/5 p-4 rounded-xl">
+                        <h3 className="text-lg font-semibold text-[color:var(--aurea-accent-primary)] mb-2">Decisive Battle</h3>
+                        <p>{dossier.strategic_verdict.decisive_battle}</p>
+                    </div>
+                )}
+                
+                {dossier.narrative_context.key_battle_insights && (
+                    <div className="bg-white/5 p-4 rounded-xl">
+                        <h3 className="text-lg font-semibold text-[color:var(--aurea-accent-tertiary)] mb-2">Key Battle Insights</h3>
+                        {dossier.narrative_context.key_battle_insights.map((insight, index) => (
+                            <div key={index} className="mb-3 last:mb-0">
+                                <h4 className="font-semibold text-[color:var(--aurea-text-primary)]">{insight.battle_title}</h4>
+                                <p className="text-sm">{insight.decisive_insight}</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        </>
+    );
+    
+    const renderNewsletterContent = (newsletter: NewsletterData) => (
+        <>
+            <h1 className="font-sans text-2xl sm:text-3xl text-[color:var(--aurea-text-primary)] mb-3 font-bold">
+                {newsletter.title}
+            </h1>
+            
+            <div className="flex flex-wrap gap-2 mb-6">
+                <span className="text-xs font-medium px-2 py-1 rounded-full bg-[color:var(--aurea-accent-primary)]/20 text-[color:var(--aurea-accent-primary)]">
+                    {newsletter.sport}
+                </span>
+                <span className="text-xs font-medium px-2 py-1 rounded-full bg-[color:var(--aurea-accent-secondary)]/20 text-[color:var(--aurea-accent-secondary)]">
+                    {newsletter.league}
+                </span>
+                {newsletter.seal && (
+                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-[color:var(--aurea-accent-tertiary)]/20 text-[color:var(--aurea-accent-tertiary)]">
+                        {newsletter.seal}
+                    </span>
+                )}
+            </div>
+            
+            <div className="prose prose-invert max-w-none space-y-6">
+                {newsletter.sections.map((section, index) => (
+                    <div key={index} className="bg-white/5 p-4 rounded-xl">
+                        <h2 className="text-xl font-semibold text-[color:var(--aurea-accent-secondary)] mb-3">
+                            {section.section_title}
+                        </h2>
+                        <p className="leading-relaxed">{section.section_content}</p>
+                    </div>
+                ))}
+            </div>
+        </>
+    );
+
+    return (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+            <div className="relative bg-[color:var(--aurea-bg-dark)] border border-white/20 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto scrollbar-hide glass-effect">
+                <button
+                    onClick={onClose}
+                    className="absolute top-4 right-4 z-10 p-2 text-[color:var(--aurea-text-secondary)] hover:text-[color:var(--aurea-text-primary)] bg-white/10 rounded-full transition-all hover:bg-white/20"
+                >
+                    <LucideIcons.X size={20} />
+                </button>
+                
+                <div className="p-6">
+                    <div className="mb-4 flex items-center">
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[color:var(--aurea-accent-primary)]/20 to-[color:var(--aurea-accent-secondary)]/20 flex items-center justify-center mr-3">
+                            {isDossier ? (
+                                <DossierIcon className="text-[color:var(--aurea-accent-primary)] w-5 h-5" />
+                            ) : (
+                                <NewsletterIcon className="text-[color:var(--aurea-accent-primary)] w-5 h-5" />
+                            )}
+                        </div>
+                        <div>
+                            <span className="text-xs font-semibold uppercase tracking-wide text-[color:var(--aurea-accent-primary)]">
+                                {content.product}
+                            </span>
+                            <p className="text-xs text-[color:var(--aurea-text-secondary)]">
+                                Published {new Date(content.nexus_timestamp).toLocaleDateString()}
+                            </p>
+                        </div>
+                    </div>
+                    
+                    {isDossier ? renderDossierContent(data as DossierData) : renderNewsletterContent(data as NewsletterData)}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// --- Portal Page & Components ---
+
+const Leaderboard = ({ user }: { user: User }) => {
+    const { nexusData } = useData();
+    const leaderboardData = nexusData.hub_update_payload.leaderboard_snapshot;
+    const rankColors = [
+        'shadow-[0_0_12px_rgba(124,164,229,0.6)] border-[color:var(--aurea-accent-primary)]', 
+        'shadow-[0_0_12px_rgba(192,192,192,0.5)] border-slate-300', 
+        'shadow-[0_0_12px_rgba(205,127,50,0.5)] border-amber-600',
+    ];
+    const userIsInLeaderboard = leaderboardData.some(entry => entry.username === user.username);
+
+    return (
+        <section className="bg-white/5 p-5 rounded-xl border border-transparent glass-effect">
+            <h3 className="font-sans text-base text-[color:var(--aurea-text-primary)] mb-3 flex items-center font-semibold">
+                <LucideIcons.Crown size={18} className="mr-2 text-[color:var(--aurea-accent-primary)]" />
+                Community Leaderboard
+            </h3>
+            <ul className="space-y-2">
+                {leaderboardData.map((entry, index) => (
+                    <li key={index} className={`flex justify-between items-center py-1.5 px-2.5 rounded-md bg-black/20 hover:bg-black/30 transition-all border border-transparent ${rankColors[index] || ''} ${entry.username === user.username ? 'ring-2 ring-[color:var(--aurea-accent-secondary)]' : ''}`}>
+                        <div className="flex items-center space-x-2.5">
+                            <span className={`w-5 h-5 flex items-center justify-center rounded-full text-xs font-bold ${index === 0 ? 'bg-[color:var(--aurea-accent-primary)] text-[color:var(--aurea-bg-dark)]' : index === 1 ? 'bg-slate-300 text-[color:var(--aurea-bg-dark)]' : index === 2 ? 'bg-amber-700 text-white' : 'bg-white/10 text-white/70'}`}>
+                                {index + 1}
+                            </span>
+                            <span className="text-[color:var(--aurea-text-primary)] font-medium text-sm">{entry.username}</span>
+                        </div>
+                        <span className="text-[color:var(--aurea-accent-primary)] font-semibold text-sm">
+                            {entry.aureaValue} AV
+                        </span>
+                    </li>
+                ))}
+            </ul>
+            {!userIsInLeaderboard && user.rank && (
+                <div className="mt-4 pt-3 border-t border-white/10">
+                    <div className="flex justify-between items-center py-1.5 px-2.5 rounded-md bg-[color:var(--aurea-accent-secondary)]/10">
+                        <div className="flex items-center space-x-2.5">
+                            <span className="w-5 h-5 flex items-center justify-center rounded-full text-xs font-bold bg-white/10 text-[color:var(--aurea-text-secondary)]">
+                                {user.rank}
+                            </span>
+                            <span className="text-[color:var(--aurea-text-primary)] font-medium text-sm">{user.username} (You)</span>
+                        </div>
+                        <span className="text-[color:var(--aurea-accent-secondary)] font-semibold text-sm">
+                            {user.aureaValue} AV
+                        </span>
+                    </div>
+                </div>
+            )}
+        </section>
+    );
+};
+
+const PollCard = ({ pollData, style }: { pollData: PollData, style?: React.CSSProperties }) => {
+    const cardRef = useCardShine();
+    return (
+        <a href={pollData.link} target="_blank" rel="noopener noreferrer" ref={cardRef as React.RefObject<HTMLAnchorElement>} style={style} className="block glass-effect border border-transparent rounded-xl p-5 transition-all duration-300 group card-hover animate-fade-in">
+            <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center space-x-2.5">
+                    <LucideIcons.BarChart className="text-[color:var(--aurea-accent-community)]" size={20} />
+                    <h3 className="font-sans text-base text-[color:var(--aurea-text-primary)] font-bold">{pollData.question}</h3>
+                </div>
+                <LucideIcons.ExternalLink size={16} className="text-[color:var(--aurea-text-secondary)] group-hover:text-[color:var(--aurea-accent-primary)] transition-colors"/>
+            </div>
+            <div className="space-y-2.5 mb-4">
+                {pollData.options.map(option => (
+                     <div key={option.id} className="p-2.5 rounded-md bg-white/5">
+                        <span className="font-semibold text-white/70 text-sm">{option.text}</span>
+                    </div>
+                ))}
+            </div>
+            <div className="text-xs text-center text-[color:var(--aurea-text-tertiary)]">Click to view on Twitter and vote</div>
+        </a>
+    );
+};
+
+const SurveyCard = ({ surveyData, style }: { surveyData: SurveyData, style?: React.CSSProperties }) => {
+    const cardRef = useCardShine();
+    return (
+        <div ref={cardRef as React.RefObject<HTMLDivElement>} style={style} className="glass-effect border border-transparent rounded-xl p-5 transition-all duration-300 group card-hover animate-fade-in relative overflow-hidden">
+            <div className="absolute -top-6 -right-6 w-20 h-20 bg-gradient-to-bl from-[color:var(--aurea-accent-editorial)]/20 to-transparent rounded-full opacity-50 group-hover:opacity-70 transition-opacity"></div>
+            <div className="relative z-10">
+                <div className="flex items-start space-x-2.5">
+                    <div className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-full bg-[color:var(--aurea-accent-editorial)]/20">
+                        <LucideIcons.PenTool className="text-[color:var(--aurea-accent-editorial)]" size={18} />
+                    </div>
+                    <div>
+                        <span className="text-xs font-semibold uppercase tracking-wide text-[color:var(--aurea-accent-editorial)]">Community Survey</span>
+                        <h3 className="font-sans text-lg text-[color:var(--aurea-text-primary)] mt-1 mb-2 font-bold leading-tight">{surveyData.topic}</h3>
+                    </div>
+                </div>
+                <p className="text-sm font-medium text-[color:var(--aurea-text-secondary)] my-3">
+                    {surveyData.description}
+                </p>
+                {surveyData.link && (
+                    <a href={surveyData.link} target="_blank" rel="noopener noreferrer" className="w-full inline-flex items-center justify-center mt-2 py-2 bg-[color:var(--aurea-accent-editorial)]/10 text-[color:var(--aurea-accent-editorial)] rounded-md font-bold text-sm hover:bg-[color:var(--aurea-accent-editorial)]/20 transition-colors">
+                        <LucideIcons.ExternalLink size={12} className="mr-2" />
+                        Share Your Insights
+                    </a>
+                )}
+            </div>
+        </div>
+    );
+};
+
+const ArenaChallengeCard = ({ challenge, onClick, style }: { challenge: ArenaChallengeData, onClick: () => void, style?: React.CSSProperties }) => {
+  const cardRef = useCardShine();
+  return (
+    <div ref={cardRef as React.RefObject<HTMLDivElement>} style={style} onClick={onClick} className="bg-white/5 backdrop-blur-sm border border-transparent rounded-xl p-5 transition-all duration-300 group card-hover cursor-pointer flex flex-col h-full animate-fade-in">
+        <div className="flex-grow">
+          <div className="flex justify-between items-start mb-3">
+            <span className={`text-xs font-semibold uppercase tracking-wider px-2.5 py-1 rounded-full bg-cyan-500/20 text-cyan-400`}>
+              {challenge.type?.replace(/_/g, ' ') || 'Challenge'}
+            </span>
+            <div className="flex items-center space-x-1.5 text-[color:var(--aurea-accent-primary)] bg-[color:var(--aurea-accent-primary)]/10 px-2.5 py-1 rounded-full">
+              <LucideIcons.Award size={14} />
+              <span className="text-xs font-bold">+{challenge.avReward} AV</span>
+            </div>
+          </div>
+          <h3 className="font-sans text-lg text-[color:var(--aurea-text-primary)] mb-2 font-bold line-clamp-2">{challenge.title}</h3>
+          <p className="text-sm font-medium text-[color:var(--aurea-text-secondary)] mt-2 line-clamp-3">{challenge.description}</p>
+        </div>
+        <div className="mt-4 pt-4 border-t border-white/10">
+            <div className="flex justify-between items-center text-xs text-[color:var(--aurea-text-secondary)] mb-3">
+                <span className="flex items-center"><LucideIcons.Users size={12} className="mr-1.5" />{challenge.participantCount} Participants</span>
+                <span className="flex items-center"><LucideIcons.Clock size={12} className="mr-1.5" />Ends {new Date(challenge.endDate).toLocaleDateString('en-US')}</span>
+            </div>
+            <button className="w-full mt-2 py-2.5 bg-[color:var(--aurea-accent-primary)]/10 text-[color:var(--aurea-accent-primary)] rounded-md font-bold text-sm hover:bg-[color:var(--aurea-accent-primary)]/20 transition-colors">
+                View Details
+            </button>
+        </div>
+    </div>
+  );
+};
+
+
+// ================================================================================= //
+// #region 💬 COMMENT SECTION COMPONENT
+// ================================================================================= //
+
+interface CommentSectionProps {
+  comments: Comment[];
+  onAddComment: (text: string) => void;
+  onLikeComment: (commentId: string) => void;
+  user: User;
+}
+
+const CommentSection: React.FC<CommentSectionProps> = ({ comments, onAddComment, onLikeComment, user }) => {
+  const [newCommentText, setNewCommentText] = useState('');
+  const [likedComments, setLikedComments] = useState<string[]>([]);
+  const heartRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  const handleCommentSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newCommentText.trim()) {
+      onAddComment(newCommentText);
+      setNewCommentText('');
+    }
+  };
+
+  const handleLikeClick = (commentId: string) => {
+    if (!likedComments.includes(commentId)) {
+      onLikeComment(commentId);
+      setLikedComments([...likedComments, commentId]);
+      const heart = heartRefs.current[commentId];
+      if (heart) {
+        heart.classList.add('animate-pulse-once');
+        setTimeout(() => heart.classList.remove('animate-pulse-once'), 500);
+      }
+    }
+  };
+
+  return (
+    <div className="mt-6 bg-black/20 p-4 rounded-xl border border-[color:var(--aurea-border)]">
+      <h4 className="font-sans text-lg font-bold mb-3 flex items-center text-[color:var(--aurea-text-primary)]">
+        <LucideIcons.Users size={18} className="mr-2 text-[color:var(--aurea-accent-community)]" />
+        Strategic Discourse
+      </h4>
+      <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 scrollbar-hide">
+        {comments.map((comment, index) => (
+          <div key={comment.id} className="flex items-start space-x-3 animate-fade-in" style={{ animationDelay: `${index * 100}ms` }}>
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[color:var(--aurea-accent-tertiary)]/20 to-[color:var(--aurea-accent-primary)]/20 flex-shrink-0 flex items-center justify-center border-2 border-[color:var(--aurea-accent-tertiary)]/30">
+              <LucideIcons.User size={16} className="text-[color:var(--aurea-accent-tertiary)]" />
+            </div>
+            <div className="flex-1">
+              <div className="bg-black/20 p-3 rounded-lg rounded-tl-none border border-[color:var(--aurea-border)]">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-xs text-[color:var(--aurea-accent-community)]">{comment.author}</span>
+                  <span className="text-xs text-[color:var(--aurea-text-tertiary)]">
+                    {new Date(comment.date).toLocaleDateString('en-US')}
+                  </span>
+                </div>
+                <p className="text-sm text-[color:var(--aurea-text-primary)] leading-relaxed">{comment.text}</p>
+              </div>
+              <div className="flex items-center mt-1.5 pl-2">
+                <button 
+                  onClick={() => handleLikeClick(comment.id)} 
+                  className={`flex items-center space-x-1 text-xs transition-colors group ${likedComments.includes(comment.id) ? 'text-pink-400' : 'text-[color:var(--aurea-text-secondary)] hover:text-pink-400'}`}
+                >
+                  <LucideIcons.Heart 
+                    ref={el => heartRefs.current[comment.id] = el} 
+                    className={`w-3.5 h-3.5 transition-all ${likedComments.includes(comment.id) ? 'fill-current' : 'group-hover:fill-current'}`} 
+                  />
+                  <span>{comment.likes + (likedComments.includes(comment.id) ? 1 : 0)}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+        {comments.length === 0 && (
+          <p className="text-sm text-[color:var(--aurea-text-secondary)] text-center py-4">No insights shared yet. Be the first.</p>
+        )}
+      </div>
+      <form onSubmit={handleCommentSubmit} className="mt-4 relative">
+        <textarea
+          className="w-full p-3 pr-10 rounded-lg bg-black/20 border-2 border-[color:var(--aurea-border)] text-sm text-[color:var(--aurea-text-primary)] placeholder-[color:var(--aurea-text-tertiary)] focus:outline-none focus:border-[color:var(--aurea-accent-community)]/50 focus:ring-2 focus:ring-[color:var(--aurea-accent-community)]/30 resize-none transition-all duration-300"
+          rows={2}
+          placeholder={`Share your insight as @${user.username}...`}
+          value={newCommentText}
+          onChange={(e) => setNewCommentText(e.target.value)}
+        ></textarea>
+        <button 
+          type="submit" 
+          className="absolute right-2.5 bottom-2.5 p-1.5 rounded-full bg-[color:var(--aurea-accent-primary)] text-[color:var(--aurea-bg-dark)] hover:scale-110 transition-transform disabled:opacity-50 disabled:cursor-not-allowed" 
+          disabled={!newCommentText.trim()}
+        >
+          <LucideIcons.Send size={16} />
+        </button>
+      </form>
+    </div>
+  );
+};
+
+// #endregion
+
+const ArenaChallengeDetailsOverlay = ({ challenge, isOpen, onClose }: { challenge: ArenaChallengeData | null, isOpen: boolean, onClose: () => void }) => {
+    const { user } = useAuth();
+    const { addComment, likeComment } = useData();
+    const [confidence, setConfidence] = useState(50);
+
+    if (!isOpen || !challenge) return null;
+
+    const handleEnterChallenge = () => {
+        // In a real application, this would be sent to the server
+        console.log(`Challenge entered with ${confidence}% confidence. This would be sent to the server.`);
+        onClose();
+    };
+
+    return (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+            <div className="relative bg-[color:var(--aurea-bg-dark)] border border-white/20 rounded-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto scrollbar-hide glass-effect">
+                <button
+                    onClick={onClose}
+                    className="absolute top-3 right-3 z-10 p-2 text-[color:var(--aurea-text-secondary)] hover:text-[color:var(--aurea-text-primary)] bg-white/10 rounded-full transition-all hover:bg-white/20"
+                >
+                    <LucideIcons.X size={20} />
+                </button>
+                
+                <div className="p-6">
+                    <h1 className="font-sans text-xl sm:text-2xl text-[color:var(--aurea-accent-community)] mb-2 font-bold">{challenge.title}</h1>
+                    <p className="text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-4">{challenge.description}</p>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                        <div className="bg-white/5 p-3 rounded-lg border border-[color:var(--aurea-border)] flex items-center space-x-2">
+                            <LucideIcons.Award size={18} className="text-[color:var(--aurea-accent-primary)]" />
+                            <div>
+                                <span className="text-xs text-[color:var(--aurea-text-secondary)] block">Reward</span>
+                                <span className="text-base font-bold text-[color:var(--aurea-accent-primary)]">+{challenge.avReward} AV</span>
+                            </div>
+                        </div>
+                        <div className="bg-white/5 p-3 rounded-lg border border-[color:var(--aurea-border)] flex items-center space-x-2">
+                            <LucideIcons.Clock size={18} className="text-[color:var(--aurea-text-secondary)]" />
+                            <div>
+                                <span className="text-xs text-[color:var(--aurea-text-secondary)] block">Ends in</span>
+                                <span className="text-base font-bold text-[color:var(--aurea-text-primary)]">
+                                    {new Date(challenge.endDate).toLocaleDateString('en-US')}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div className="my-4 bg-black/20 p-3 rounded-lg border border-[color:var(--aurea-border)]">
+                        <label htmlFor="confidence" className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1.5">
+                            Set your Confidence: <span className="font-bold text-[color:var(--aurea-accent-primary)]">{confidence}%</span>
+                        </label>
+                        <input
+                            id="confidence"
+                            type="range"
+                            min="0"
+                            max="100"
+                            step="1"
+                            value={confidence}
+                            onChange={(e) => setConfidence(parseInt(e.target.value))}
+                            className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[color:var(--aurea-accent-primary)]"
+                        />
+                        <div className="flex justify-between text-xs text-[color:var(--aurea-text-tertiary)] mt-1">
+                            <span>0%</span>
+                            <span>50%</span>
+                            <span>100%</span>
+                        </div>
+                        <p className="text-xs text-[color:var(--aurea-text-tertiary)] mt-1.5">
+                            Note: High confidence (90%+) on highly inaccurate predictions may incur an AV penalty.
+                        </p>
+                    </div>
+                    
+                    <button onClick={handleEnterChallenge} className="btn-primary w-full text-base smooth-focus">
+                        Enter Challenge
+                    </button>
+                    
+                    {user && (
+                        <CommentSection
+                            comments={challenge.comments || []}
+                            onAddComment={(text) => addComment(challenge.challenge_id, text)}
+                            onLikeComment={(commentId) => likeComment(challenge.challenge_id, commentId)}
+                            user={user}
+                        />
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const PortalPage = () => {
+    const { user } = useAuth();
+    const { nexusData } = useData();
+    const [activeTab, setActiveTab] = useState('arena');
+    const [selectedChallenge, setSelectedChallenge] = useState<ArenaChallengeData | null>(null);
+
+    const portalProducts = useMemo(() => nexusData.nexus_products.filter(p => p.hub_destination === 'PORTAL'), [nexusData]);
+    const arenaContent = useMemo(() => portalProducts.filter(p => p.product === 'ArenaChallenge'), [portalProducts]);
+    const signalContent = useMemo(() => portalProducts.filter(p => p.product === 'POLL' || p.product === 'SURVEY'), [portalProducts]);
+    
+    if (!user) return <LoadingSpinner />;
+
+    return (
+      <>
+        <div className="max-w-3xl mx-auto px-4">
+          <p className="text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-6 text-center max-w-xl mx-auto">Where Strategy Becomes Insight.</p>
+          <div className="flex space-x-1 mb-6 bg-black/20 rounded-lg p-1 glass-effect">
+            {[{ id: 'arena', label: 'Arena', icon: LucideIcons.Sword }, { id: 'signal', label: 'Signal', icon: LucideIcons.Megaphone }, { id: 'community', label: 'Community', icon: LucideIcons.Users }].map((tab) => {
+              const IconComponent = tab.icon;
+              return (<button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center justify-center space-x-1.5 px-3 py-1.5 rounded-md transition-all duration-200 flex-1 text-sm ${activeTab === tab.id ? 'bg-[color:var(--aurea-accent-community)] text-[color:var(--aurea-bg-dark)] font-bold' : 'text-[color:var(--aurea-text-primary)] hover:text-white'}`}>
+                  <IconComponent size={16} /><span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {activeTab === 'arena' && (
+            <section>
+              <h2 className="font-sans text-lg text-[color:var(--aurea-accent-community)] mb-3 font-semibold text-center">Active Challenges</h2>
+              {arenaContent.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {arenaContent.map((item, index) => (
+                      <ArenaChallengeCard key={(item.data as ArenaChallengeData).challenge_id} challenge={item.data as ArenaChallengeData} onClick={() => setSelectedChallenge(item.data as ArenaChallengeData)} style={{ animationDelay: `${index * 100}ms` }} />
+                    ))}
+                  </div>
+              ) : (
+                  <div className="text-center py-12 text-[color:var(--aurea-text-secondary)] glass-effect rounded-xl border-transparent">
+                      <LucideIcons.Swords size={40} className="mx-auto mb-3 opacity-50" />
+                      <p className="font-sans text-base mb-1 font-semibold text-[color:var(--aurea-text-primary)]">The Arena is quiet... for now.</p>
+                      <p className="text-sm font-medium">Explore the Chronicles while new challenges are forged.</p>
+                  </div>
+              )}
+            </section>
+          )}
+          {activeTab === 'community' && (
+            <section className="animate-fade-in"><Leaderboard user={user} /></section>
+          )}
+          {activeTab === 'signal' && (
+            <section>
+              <h2 className="font-sans text-lg text-[color:var(--aurea-accent-community)] mb-3 font-semibold text-center">Signal Broadcasts</h2>
+              <div className="space-y-4">
+              {signalContent.length > 0 ? (signalContent.map((item, index) => {
+                 if (item.product === 'POLL') {
+                   return <PollCard key={(item.data as PollData).poll_id || index} pollData={item.data as PollData} style={{ animationDelay: `${index * 100}ms`, opacity: 0 }} />;
+                 }
+                 if (item.product === 'SURVEY') {
+                   return <SurveyCard key={(item.data as SurveyData).survey_id || index} surveyData={item.data as SurveyData} style={{ animationDelay: `${index * 100}ms`, opacity: 0 }} />;
+                 }
+                 return null;
+              })) : (
+                  <div className="text-center py-12 text-[color:var(--aurea-text-secondary)] glass-effect rounded-xl border-transparent">
+                      <LucideIcons.Megaphone size={40} className="mx-auto mb-3 opacity-50" />
+                      <p className="font-sans text-base mb-1 font-semibold text-[color:var(--aurea-text-primary)]">The Signal is clear.</p>
+                      <p className="text-sm font-medium">Check back later for new broadcasts.</p>
+                  </div>
+              )}
+              </div>
+            </section>
+          )}
+        </div>
+        <ArenaChallengeDetailsOverlay challenge={selectedChallenge} isOpen={!!selectedChallenge} onClose={() => setSelectedChallenge(null)} />
+      </>
+    );
+};
+
+// --- Sanctuary Page & Components ---
+const SanctuaryPage = () => {
+    return (
+        <div className="max-w-3xl mx-auto px-4">
+            <p className="text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-6 text-center max-w-xl mx-auto">
+                The eternal and immutable archive of all manifested intelligence.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <button className="flex items-center justify-between p-5 rounded-xl border-2 border-transparent bg-white/5 hover:border-[color:var(--aurea-accent-primary)]/50 transition-all group">
+                    <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-[color:var(--aurea-accent-primary)]/20 rounded-full flex items-center justify-center text-[color:var(--aurea-accent-primary)]">
+                            <DossierIcon size={20} />
+                        </div>
+                        <span className="font-sans text-lg text-[color:var(--aurea-text-primary)] font-bold">Dossiers</span>
+                    </div>
+                    <LucideIcons.ChevronRight size={20} className="text-[color:var(--aurea-text-secondary)] group-hover:text-[color:var(--aurea-accent-primary)] transition-colors" />
+                </button>
+                <button className="flex items-center justify-between p-5 rounded-xl border-2 border-transparent bg-white/5 hover:border-[color:var(--aurea-accent-primary)]/50 transition-all group">
+                    <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-[color:var(--aurea-accent-primary)]/20 rounded-full flex items-center justify-center text-[color:var(--aurea-accent-primary)]">
+                            <NewsletterIcon size={20} />
+                        </div>
+                        <span className="font-sans text-lg text-[color:var(--aurea-text-primary)] font-bold">Newsletters</span>
+                    </div>
+                    <LucideIcons.ChevronRight size={20} className="text-[color:var(--aurea-text-secondary)] group-hover:text-[color:var(--aurea-accent-primary)] transition-colors" />
+                </button>
+            </div>
+        </div>
+    );
+};
+
+// --- Profile Page & Components ---
+const ProfilePage = () => {
+    const { user, updateUser } = useAuth();
+    const { addToast } = useNotifications();
+    const [isEditing, setIsEditing] = useState(false);
+
+    if (!user) { return <div className="flex justify-center items-center h-64"><LoadingSpinner /></div>; }
+
+    const handleSave = (editedUser: User) => {
+        let userToUpdate = { ...editedUser };
+        const originalUser = user;
+    
+        if (!originalUser.profile && userToUpdate.profile) {
+            const profileBonus = 50;
+            userToUpdate.aureaValue += profileBonus;
+    
+            const newTransaction: Transaction = {
+                id: `tx_${Date.now()}`,
+                timestamp: new Date().toISOString(),
+                reason_code: 'PROFILE_SELECTION',
+                av_change: profileBonus,
+                description: 'Bonus for first Profile selection'
+            };
+    
+            if (!userToUpdate.transactions) {
+                userToUpdate.transactions = [];
+            }
+            userToUpdate.transactions.unshift(newTransaction);
+            
+            userToUpdate.aureaValueHistory.push({ 
+                date: new Date().toISOString().slice(0, 10), 
+                value: userToUpdate.aureaValue 
+            });
+    
+            addToast(`+${profileBonus} AV for selecting the ${PROFILES[userToUpdate.profile].name} profile!`);
+        }
+    
+        updateUser(userToUpdate);
+        setIsEditing(false);
+    };
+
+    return (
+      <div className="max-w-3xl mx-auto px-4">
+        <ProfileHeader user={user} onEdit={() => setIsEditing(true)} />
+        {isEditing && (
+            <ProfileEditModal 
+                user={user}
+                isOpen={isEditing}
+                onClose={() => setIsEditing(false)}
+                onSave={handleSave}
+            />
+        )}
+        <div className="mt-8 space-y-6">
+          <ProfileDisplay profile={user.profile} />
+          <AvEvolutionChart data={user} />
+          <section className="bg-white/5 p-5 rounded-xl border-transparent glass-effect">
+            <BadgeDisplay badges={user.badges || []} />
+          </section>
+           <section className="bg-white/5 p-5 rounded-xl border-transparent glass-effect">
+            <h3 className="font-sans text-base text-[color:var(--aurea-text-primary)] mb-3 flex items-center font-semibold">
+                <LucideIcons.Clock size={18} className="mr-2 text-[color:var(--aurea-accent-primary)]" />
+                Recent AV Transactions
+            </h3>
+            <div className="space-y-2">
+                {user.transactions && user.transactions.length > 0 ? (
+                user.transactions.map((transaction) => (
+                    <div key={transaction.id} className="py-1.5 px-2.5 rounded-md bg-black/20 border border-[color:var(--aurea-border)]">
+                        <div className="flex justify-between items-center">
+                        <div>
+                            <div className="text-sm font-medium text-[color:var(--aurea-text-primary)] capitalize">{transaction.reason_code.replace(/_/g, ' ').toLowerCase()}</div>
+                            <div className="text-xs text-[color:var(--aurea-text-secondary)]">{new Date(transaction.timestamp).toLocaleDateString('en-US')}</div>
+                        </div>
+                        <div className={`text-sm font-bold text-right ${transaction.av_change > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            <span>{transaction.av_change > 0 ? '+' : ''}{transaction.av_change} AV</span>
+                        </div>
+                        </div>
+                    </div>
+                ))
+                ) : (
+                <p className="text-sm text-[color:var(--aurea-text-secondary)] text-center py-4">No transactions yet.</p>
+                )}
+            </div>
+            </section>
+          <section className="bg-white/5 p-5 rounded-xl border-transparent glass-effect">
+            <h3 className="font-sans text-base text-[color:var(--aurea-text-primary)] mb-3 font-semibold">Statistics</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="bg-black/20 p-3 rounded-lg flex items-center space-x-2.5"><LucideIcons.BarChart className="w-6 h-6 text-[color:var(--aurea-accent-primary)]"/><div><div className="text-[color:var(--aurea-text-secondary)] text-xs mb-0.5">Global Rank</div><div className="text-xl font-bold text-[color:var(--aurea-text-primary)]">#{user.rank || 'N/A'}</div></div></div>
+              <div className="bg-black/20 p-3 rounded-lg flex items-center space-x-2.5"><LucideIcons.PenTool className="w-6 h-6 text-[color:var(--aurea-accent-secondary)]"/><div><div className="text-[color:var(--aurea-text-secondary)] text-xs mb-0.5">Insights</div><div className="text-xl font-bold text-[color:var(--aurea-text-primary)]">{user.insightsShared || 0}</div></div></div>
+              <div className="bg-black/20 p-3 rounded-lg flex items-center space-x-2.5"><LucideIcons.Target className="w-6 h-6 text-[color:var(--aurea-accent-secondary)]"/><div><div className="text-[color:var(--aurea-text-secondary)] text-xs mb-0.5">Predictions</div><div className="text-xl font-bold text-[color:var(--aurea-text-primary)]">{user.predictionsMade || 0}</div></div></div>
+              <div className="bg-black/20 p-3 rounded-lg flex items-center space-x-2.5"><LucideIcons.CheckSquare className="w-6 h-6 text-[color:var(--aurea-accent-secondary)]"/><div><div className="text-[color:var(--aurea-text-secondary)] text-xs mb-0.5">Challenges</div><div className="text-xl font-bold text-[color:var(--aurea-text-primary)]">{user.challengesCompleted || 0}</div></div></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    );
+};
+
+const ProfileHeader = ({ user, onEdit }: { user: User, onEdit: () => void }) => {
+  const { title: levelTitle, color: levelColor } = getUserLevel(user.aureaValue);
+  const IconComponent = PROFILES[user.profile]?.icon || LucideIcons.User;
+  return (
+    <div className="text-center mb-6 animate-fade-in">
+      <div className="relative w-24 h-24 mx-auto mb-3">
+        <div className="w-20 h-20 bg-gradient-to-br from-[color:var(--aurea-accent-secondary)]/30 to-[color:var(--aurea-accent-primary)]/30 rounded-full mx-auto flex items-center justify-center border-4 border-[color:var(--aurea-bg-dark)] relative z-10 animate-float">
+          <AureaLogoIcon className="text-white w-9 h-9" style={{ filter: 'drop-shadow(0 0 6px rgba(var(--aurea-accent-primary-rgb), 0.6))' }} />
+        </div>
+      </div>
+      <h1 className="font-sans text-2xl text-[color:var(--aurea-text-primary)] mb-1 font-bold gradient-text">@{user.username}</h1>
+      <div className="flex items-center justify-center space-x-2 text-sm mb-2.5">
+        <span className="px-2 py-0.5 rounded-full font-medium text-xs" style={{ backgroundColor: `${levelColor}20`, color: levelColor }}>
+          {levelTitle}
+        </span>
+        <span className="text-[color:var(--aurea-text-tertiary)]">•</span>
+        <span className="text-[color:var(--aurea-accent-primary)] font-semibold">{user.aureaValue} AV</span>
+      </div>
+      {user.profile && (
+        <div className="inline-flex items-center bg-white/5 px-2.5 py-1 rounded-full border border-[color:var(--aurea-accent-secondary)]/20">
+          <IconComponent size={12} className="mr-1.5 text-[color:var(--aurea-accent-secondary)]" />
+          <span className="text-xs font-medium capitalize text-[color:var(--aurea-text-secondary)]">{PROFILES[user.profile]?.name || user.profile.replace('_', ' ')}</span>
+        </div>
+      )}
+      <div className="mt-3">
+        <button onClick={onEdit} className="text-xs text-[color:var(--aurea-text-secondary)] hover:text-[color:var(--aurea-accent-primary)] transition-colors animated-underline">
+          <LucideIcons.Edit size={14} className="inline-block mr-1" /> Preferences
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const ProfileDisplay = ({ profile }: { profile: ProfileKey }) => {
+  if (!profile) return null;
+  const profileData = PROFILES[profile] || {};
+  const IconComponent = profileData.icon || LucideIcons.User;
+  return (
+    <section className="bg-white/5 p-5 rounded-xl border border-transparent glass-effect">
+      <h3 className="font-sans text-base text-[color:var(--aurea-text-primary)] mb-3 flex items-center font-semibold">
+        <IconComponent size={18} className="mr-2 text-[color:var(--aurea-accent-secondary)]" />
+        Archetype Profile
+      </h3>
+      <div className="text-center">
+        <h4 className="font-sans text-lg text-[color:var(--aurea-accent-secondary)] font-bold mb-1">{profileData.name}</h4>
+        <p className="text-sm font-medium text-[color:var(--aurea-text-secondary)]">{profileData.description}</p>
+      </div>
+    </section>
+  );
+};
+
+const AvEvolutionChart = ({ data }: { data: User }) => {
+  const points = data.aureaValueHistory.map(item => item.value);
+  const maxVal = Math.max(...points, 1);
+  return (
+    <section className="bg-white/5 p-5 rounded-xl border border-transparent glass-effect">
+      <h3 className="font-sans text-base text-[color:var(--aurea-text-primary)] mb-3 flex items-center font-semibold">
+        <LucideIcons.TrendingUp size={18} className="mr-2 text-[color:var(--aurea-accent-primary)]" />
+        Aurea Value Evolution
+      </h3>
+      <div className="relative w-full h-[120px] overflow-hidden">
+        <svg preserveAspectRatio="none" className="absolute top-0 left-0 w-full h-full" viewBox={`0 0 100 100`}>
+          <defs>
+            <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="var(--aurea-accent-secondary)" />
+              <stop offset="100%" stopColor="var(--aurea-accent-primary)" />
+            </linearGradient>
+          </defs>
+          <path d={`M0,100 L${points.map((val, i) => `${(i / (points.length - 1)) * 100},${100 - (val / maxVal) * 100}`).join(' ')} L100,100`} fill="url(#lineGradient)" opacity="0.1" />
+          <path d={`M${points.map((val, i) => `${(i / (points.length - 1)) * 100},${100 - (val / maxVal) * 100}`).join(' ')}`} fill="none" stroke="url(#lineGradient)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          {points.map((val, i) => (<circle key={i} cx={`${(i / (points.length - 1)) * 100}%`} cy={`${100 - (val / maxVal) * 100}%`} r="2" fill="var(--aurea-accent-primary)" stroke="var(--aurea-bg-dark)" strokeWidth="1" />))}
+        </svg>
+      </div>
+      <div className="flex justify-between text-xs text-[color:var(--aurea-text-tertiary)] mt-3">
+        <span>{new Date(data.aureaValueHistory[0].date).toLocaleDateString('en-US')}</span>
+        <span>{new Date(data.aureaValueHistory[data.aureaValueHistory.length - 1].date).toLocaleDateString('en-US')}</span>
+      </div>
+    </section>
+  );
+};
+
+const BadgeDisplay = ({ badges }: { badges: string[] }) => {
+  return (
+    <>
+      <h3 className="font-sans text-base text-[color:var(--aurea-text-primary)] mb-3 flex items-center font-semibold">
+        <LucideIcons.Award size={18} className="mr-2 text-[color:var(--aurea-accent-primary)]" />
+        Badges
+      </h3>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {Object.entries(BADGES).map(([key, badge]) => {
+          const IconComponent = badge.icon || LucideIcons.Award;
+          const isEarned = badges.includes(key);
+          return (
+            <div key={key} className={`p-3 rounded-lg border flex flex-col items-center text-center transition-all ${isEarned ? 'bg-[color:var(--aurea-accent-secondary)]/10 border-[color:var(--aurea-accent-secondary)]/30 text-[color:var(--aurea-accent-secondary)]' : 'bg-white/5 border-transparent text-white/30'}`}>
+              <IconComponent size={22} className="mb-1.5" />
+              <span className="text-xs font-medium">{badge.name}</span>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+};
+
+interface ProfileEditModalProps {
+    user: User;
+    isOpen: boolean;
+    onClose: () => void;
+    onSave: (user: User) => void;
+}
+
+const ProfileEditModal: React.FC<ProfileEditModalProps> = ({ user, isOpen, onClose, onSave }) => {
+    const [editedUser, setEditedUser] = useState(user);
+
+    useEffect(() => {
+        setEditedUser(user);
+    }, [user, isOpen]);
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+          <div className="relative modal-panel-effect rounded-xl w-full max-w-md p-6">
+            <h2 className="font-sans text-xl font-bold mb-5 text-[color:var(--aurea-accent-secondary)]">Preferences</h2>
+            <div className="space-y-4">
+              <div>
+                  <label className="block mb-1.5 text-sm font-medium text-[color:var(--aurea-text-secondary)]">Username</label>
+                  <input type="text" value={editedUser.username} onChange={(e) => setEditedUser({ ...editedUser, username: e.target.value })} className="w-full p-2.5 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)] focus:outline-none focus:border-[color:var(--aurea-accent-secondary)]/50"/>
+              </div>
+              <div>
+                  <label className="block mb-1.5 text-sm font-medium text-[color:var(--aurea-text-secondary)]">Archetype Profile</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-2 scrollbar-hide">
+                    {Object.entries(PROFILES).map(([key, data]) => (
+                    <button key={key} onClick={() => setEditedUser({ ...editedUser, profile: key as ProfileKey })} className={`p-3 rounded-md border-2 text-center transition-all duration-300 w-full bg-white/5 hover:bg-white/10 ${editedUser.profile === key ? 'border-[color:var(--aurea-accent-primary)]' : 'border-transparent'}`}>
+                        <div className="flex flex-col items-center mb-1">
+                            <data.icon size={20} className="mb-1.5" style={{color: data.color}} />
+                            <h4 className="font-sans font-bold text-sm text-[color:var(--aurea-text-primary)]">{data.name}</h4>
+                        </div>
+                        <p className="text-xs font-medium text-[color:var(--aurea-text-secondary)]">{data.description}</p>
+                    </button>
+                    ))}
+                  </div>
+              </div>
+            </div>
+            <div className="flex justify-end space-x-3 mt-6">
+                <button onClick={onClose} className="btn-secondary">Cancel</button>
+                <button onClick={() => onSave(editedUser)} className="btn-primary">Save</button>
+            </div>
+          </div>
+        </div>
+    );
+};
+
+
+// --- Admin Page & Components ---
+const AdminPage = () => {
+    const { nexusData, setNexusData, addProduct, archiveProduct } = useData();
+    const { addToast } = useNotifications();
+    const [jsonInput, setJsonInput] = useState(() => JSON.stringify(nexusData, null, 2));
+    const [jsonError, setJsonError] = useState('');
+    
+    const [aureaLedger, setAureaLedger] = useState<any>(null);
+    const [newTransaction, setNewTransaction] = useState({ 
+        user_id: '', av_change: '', reason_code: '', context_id: '' 
+    });
+
+    const availableChronicles = useMemo(() => 
+        nexusData.nexus_products.filter(p => p.hub_destination === 'CHRONICLES'),
+        [nexusData]
+    );
+
+    useEffect(() => {
+        setJsonInput(JSON.stringify(nexusData, null, 2));
+    }, [nexusData]);
+    
+    const handleJsonUpdate = () => {
+        try {
+            const newNexusData = JSON.parse(jsonInput);
+            if (newNexusData.nexus_id && newNexusData.nexus_products) {
+                setNexusData(newNexusData);
+                setJsonError('');
+                addToast('Nexus data updated successfully!');
+            } else {
+                setJsonError('Invalid Nexus data structure.');
+                addToast('Invalid Nexus data structure.', 'error');
+            }
+        } catch (e) {
+            setJsonError('Invalid JSON format.');
+            addToast('Invalid JSON format.', 'error');
+        }
+    };
+    
+    const handleLedgerUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const ledgerData = JSON.parse(e.target?.result as string);
+                    // Validate basic structure
+                    if (ledgerData.version && ledgerData.event_rules) {
+                        setAureaLedger(ledgerData);
+                        addToast('Aurea Value Ledger loaded successfully!');
+                    } else {
+                        throw new Error('Invalid ledger structure');
+                    }
+                } catch (error) {
+                    console.error("Invalid JSON file", error);
+                    addToast('Invalid AureaValueLedger JSON file', 'error');
+                }
+            };
+            reader.readAsText(file);
+        }
+    };
+
+    const handleTransactionSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        // In a real application, this would send to the server
+        addToast(`Manual transaction for user ${newTransaction.user_id} submitted.`);
+        setNewTransaction({ user_id: '', av_change: '', reason_code: '', context_id: '' });
+    };
+
+    const handlePollSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        const pollData: PollData = {
+            poll_id: `poll_${Date.now()}`,
+            question: newPoll.question,
+            options: [], // Options will come from Twitter
+            votes: {},
+            isClosed: false,
+            link: newPoll.link
+        };
+        const newProduct: NexusProduct = {
+            product: 'POLL',
+            hub_destination: 'PORTAL',
+            nexus_timestamp: new Date().toISOString(),
+            data: pollData
+        };
+        addProduct(newProduct);
+        addToast('New Poll link has been added!');
+        setNewPoll({ question: '', link: '' });
+    };
+
+    const handleArchive = (product: NexusProduct, seal: SealType) => {
+        const id = (product.data as any).dossier_id || (product.data as any).newsletter_id;
+        archiveProduct(id, seal);
+        addToast(`${product.product} archived to Sanctuary.`);
+    }
+
+    const [newPoll, setNewPoll] = useState({ question: '', link: '' });
+
+    // New challenge creation logic for the admin panel
+    const [selectedTemplate, setSelectedTemplate] = useState<ChallengeTemplate | null>(null);
+    const [newChallengeData, setNewChallengeData] = useState<any>({});
+
+    const recognizeChallengesFromNexus = useCallback(() => {
+        const suggestions = [];
+        nexusData.nexus_products.forEach(product => {
+            if (product.product === 'Dossier') {
+                const dossier = product.data as DossierData;
+                suggestions.push({
+                    type: 'archetype_duel',
+                    confidence: 0.9,
+                    source: product,
+                    autoConfig: {
+                        entityX: dossier.entity_X,
+                        entityY: dossier.entity_Y,
+                        title: `${dossier.entity_X.entity_name} vs ${dossier.entity_Y.entity_name}`,
+                        description: `Who will win this strategic duel?`
+                    }
+                });
+                
+                if (dossier.strategic_verdict) {
+                    suggestions.push({
+                        type: 'pillar_challenge',
+                        confidence: 0.7,
+                        source: product,
+                        autoConfig: {
+                            matchContext: dossier.match_context,
+                            title: `Decisive Pillar: ${dossier.entity_X.entity_name} vs ${dossier.entity_Y.entity_name}`,
+                            description: `Which pillar will be most decisive for victory?`
+                        }
+                    });
+                }
+            }
+        });
+        return suggestions;
+    }, [nexusData]);
+
+    const handleCreateChallenge = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedTemplate) return;
+
+        const newChallenge: NexusProduct = {
+            product: 'ArenaChallenge',
+            hub_destination: 'PORTAL',
+            nexus_timestamp: new Date().toISOString(),
+            data: {
+                challenge_id: `challenge_${Date.now()}`,
+                type: selectedTemplate.type,
+                title: newChallengeData.title || selectedTemplate.name,
+                description: newChallengeData.description || selectedTemplate.description,
+                avReward: parseInt(newChallengeData.avReward) || 100,
+                endDate: newChallengeData.endDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+                participantCount: 0,
+                comments: [],
+                status: 'active',
+                ...newChallengeData,
+            } as ArenaChallengeData,
+        };
+
+        addProduct(newChallenge);
+        addToast(`New challenge created: ${newChallenge.data.title}`);
+        setSelectedTemplate(null);
+        setNewChallengeData({});
+    };
+
+    const suggestedChallenges = useMemo(() => recognizeChallengesFromNexus(), [recognizeChallengesFromNexus]);
+
+    return (
+        <div className="max-w-3xl mx-auto px-4 space-y-6">
+            <h1 className="font-sans text-2xl text-[color:var(--aurea-accent-secondary)] font-bold text-center">Admin Nexus</h1>
+            
+            <section className="glass-effect p-5 rounded-xl">
+                <h2 className="font-sans text-lg font-semibold text-[color:var(--aurea-text-primary)] mb-4">Manifest Nexus Update</h2>
+                <textarea
+                    className="w-full p-3 rounded-lg bg-black/20 border-2 border-[color:var(--aurea-border)] text-sm text-[color:var(--aurea-text-primary)] focus:outline-none focus:border-[color:var(--aurea-accent-community)]/50 font-mono"
+                    rows={10}
+                    value={jsonInput}
+                    onChange={(e) => setJsonInput(e.target.value)}
+                ></textarea>
+                {jsonError && <p className="text-red-400 text-sm mt-2">{jsonError}</p>}
+                <button onClick={handleJsonUpdate} className="btn-primary w-full mt-3">Update Nexus from JSON</button>
+            </section>
+
+            <section className="glass-effect p-5 rounded-xl">
+               <h2 className="font-sans text-lg font-semibold text-[color:var(--aurea-text-primary)] mb-4">Challenge Creation Nexus</h2>
+               
+                {selectedTemplate ? (
+                    <form onSubmit={handleCreateChallenge} className="space-y-4 animate-fade-in">
+                        <div className="flex items-center space-x-3 mb-4">
+                            <selectedTemplate.icon size={24} className="text-[color:var(--aurea-accent-secondary)]" />
+                            <div>
+                                <h3 className="text-lg font-bold text-[color:var(--aurea-text-primary)]">{selectedTemplate.name}</h3>
+                                <p className="text-sm text-[color:var(--aurea-text-secondary)]">{selectedTemplate.description}</p>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1.5">Challenge Title</label>
+                            <input type="text" value={newChallengeData.title || ''} onChange={e => setNewChallengeData({...newChallengeData, title: e.target.value})} className="w-full p-2.5 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)]" required/>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1.5">Description</label>
+                            <textarea value={newChallengeData.description || ''} onChange={e => setNewChallengeData({...newChallengeData, description: e.target.value})} rows={3} className="w-full p-2.5 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)]" required></textarea>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1.5">AV Reward</label>
+                                <input type="number" value={newChallengeData.avReward || 100} onChange={e => setNewChallengeData({...newChallengeData, avReward: e.target.value})} className="w-full p-2.5 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)]" required/>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1.5">End Date</label>
+                                <input type="date" value={newChallengeData.endDate || ''} onChange={e => setNewChallengeData({...newChallengeData, endDate: e.target.value})} className="w-full p-2.5 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)]" required/>
+                            </div>
+                        </div>
+                        
+                        {/* Dynamic fields based on template */}
+                        {selectedTemplate.id === 'template_duelo' && (
+                            <div className="grid grid-cols-2 gap-3 animate-fade-in">
+                                <div>
+                                    <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1.5">Entity X Name</label>
+                                    <input type="text" value={newChallengeData.entityX?.entity_name || ''} onChange={e => setNewChallengeData({...newChallengeData, entityX: { entity_name: e.target.value }})} className="w-full p-2.5 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)]" required/>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1.5">Entity Y Name</label>
+                                    <input type="text" value={newChallengeData.entityY?.entity_name || ''} onChange={e => setNewChallengeData({...newChallengeData, entityY: { entity_name: e.target.value }})} className="w-full p-2.5 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)]" required/>
+                                </div>
+                            </div>
+                        )}
+                        
+                        <div className="flex justify-between space-x-2 mt-4">
+                            <button type="button" onClick={() => setSelectedTemplate(null)} className="btn-secondary flex-1">Back</button>
+                            <button type="submit" className="btn-primary flex-1">Create Challenge</button>
+                        </div>
+                    </form>
+                ) : (
+                    <div className="space-y-4">
+                        <h3 className="text-lg font-semibold text-[color:var(--aurea-text-primary)]">Select a Template:</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {CHALLENGE_TEMPLATES.map(template => (
+                                <button key={template.id} onClick={() => setSelectedTemplate(template)} className="p-4 rounded-xl border-2 border-transparent bg-white/5 hover:border-[color:var(--aurea-accent-secondary)]/50 transition-all text-left">
+                                    <div className="flex items-center space-x-3">
+                                        <template.icon size={20} className="text-[color:var(--aurea-accent-secondary)]" />
+                                        <div>
+                                            <h4 className="font-sans font-bold text-base text-[color:var(--aurea-text-primary)]">{template.name}</h4>
+                                            <p className="text-sm text-[color:var(--aurea-text-secondary)]">{template.description}</p>
+                                        </div>
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {suggestedChallenges.length > 0 && (
+                    <div className="mt-8 pt-6 border-t border-[color:var(--aurea-border)] animate-fade-in">
+                        <h3 className="text-lg font-semibold text-[color:var(--aurea-text-primary)] mb-4">Suggested Challenges from Nexus:</h3>
+                        <div className="space-y-3">
+                            {suggestedChallenges.map((suggestion, index) => (
+                                <div key={index} className="bg-black/20 p-3 rounded-lg flex justify-between items-center">
+                                    <div className="flex-1 min-w-0">
+                                        <span className="text-sm font-medium text-white/80 truncate">{suggestion.autoConfig.title}</span>
+                                        <p className="text-xs text-[color:var(--aurea-text-secondary)]">Source: Dossier `...${(suggestion.source.data as DossierData).dossier_id.slice(-6)}`</p>
+                                    </div>
+                                    <button onClick={() => { setSelectedTemplate(CHALLENGE_TEMPLATES.find(t => t.type === suggestion.type) || null); setNewChallengeData(suggestion.autoConfig); }} className="ml-4 text-xs btn-secondary py-1 px-3">Use Template</button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </section>
+
+            <section className="glass-effect p-5 rounded-xl">
+                <h2 className="font-sans text-lg font-semibold text-[color:var(--aurea-text-primary)] mb-4">Archive to Sanctuary</h2>
+                <div className="space-y-3">
+                    {availableChronicles.length > 0 ? availableChronicles.map(product => {
+                        const data = product.data as DossierData | NewsletterData;
+                        const title = 'dossier_id' in data ? `${data.entity_X.entity_name} vs ${data.entity_Y.entity_name}` : data.title;
+                        const id = 'dossier_id' in data ? data.dossier_id : data.title;
+                        
+                        return (
+                            <div key={id} className="bg-black/20 p-3 rounded-lg flex items-center justify-between">
+                                <span className="text-sm text-white/80 truncate pr-2">{title}</span>
+                                <div className="flex items-center space-x-2">
+                                    <select onChange={e => handleArchive(product, e.target.value as SealType)} className="bg-white/10 text-white/80 text-xs rounded-md p-1 border border-transparent focus:outline-none focus:border-[color:var(--aurea-accent-primary)]">
+                                        <option value="">Archive with seal...</option>
+                                        {SEAL_OPTIONS.map(seal => <option key={seal} value={seal} className="bg-[color:var(--aurea-bg-dark)]">{seal}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                        )
+                    }) : <p className="text-sm text-center text-[color:var(--aurea-text-secondary)]">No items in Chronicles to archive.</p>}
+                </div>
+            </section>
+
+            <section className="glass-effect p-5 rounded-xl">
+                <h2 className="font-sans text-lg font-semibold text-[color:var(--aurea-text-primary)] mb-4">Economic Controls</h2>
+                <div className="mb-5">
+                    <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1.5">Aurea Value Ledger</label>
+                    <input 
+                        type="file" 
+                        accept=".json" 
+                        onChange={handleLedgerUpload}
+                        className="w-full text-sm text-[color:var(--aurea-text-secondary)] file:mr-3 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-[color:var(--aurea-accent-primary)] file:text-[color:var(--aurea-bg-dark)] hover:file:bg-[color:var(--aurea-accent-primary)]/80 transition-colors cursor-pointer"
+                    />
+                    {aureaLedger && (
+                        <p className="text-xs text-green-400 mt-2">
+                            ✓ Ledger loaded: Version {aureaLedger.version}, last updated {new Date(aureaLedger.last_updated).toLocaleDateString()}
+                        </p>
+                    )}
+                </div>
+
+                <form onSubmit={handleTransactionSubmit} className="space-y-3">
+                    <h3 className="font-sans text-base font-semibold text-[color:var(--aurea-text-primary)] pt-4 border-t border-[color:var(--aurea-border)]">Manual AV Transaction</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1">User ID</label>
+                            <input 
+                                type="text" 
+                                value={newTransaction.user_id} 
+                                onChange={(e) => setNewTransaction({...newTransaction, user_id: e.target.value})} 
+                                required 
+                                className="w-full p-2 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)]"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1">AV Change</label>
+                            <input 
+                                type="number" 
+                                value={newTransaction.av_change} 
+                                onChange={(e) => setNewTransaction({...newTransaction, av_change: e.target.value})} 
+                                required 
+                                className="w-full p-2 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)]"
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1">Reason Code</label>
+                        {aureaLedger ? (
+                            <select 
+                                value={newTransaction.reason_code} 
+                                onChange={(e) => setNewTransaction({...newTransaction, reason_code: e.target.value})}
+                                required
+                                className="w-full p-2.5 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)] focus:outline-none focus:border-[color:var(--aurea-accent-secondary)]/50 text-xs"
+                            >
+                                <option value="">Select a Reason Code</option>
+                                {aureaLedger.event_rules.map((rule: any) => (
+                                    <option key={rule.reason_code} value={rule.reason_code}>
+                                        {rule.reason_code} ({rule.base_av_change} AV) - {rule.description}
+                                    </option>
+                                ))}
+                            </select>
+                        ) : (
+                            <p className="text-xs text-[color:var(--aurea-text-secondary)] p-2.5 bg-black/20 rounded-md">
+                                Please load an AureaValueLedger.json first.
+                            </p>
+                        )}
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1">Context ID (Optional)</label>
+                        <input 
+                            type="text" 
+                            value={newTransaction.context_id} 
+                            onChange={(e) => setNewTransaction({...newTransaction, context_id: e.target.value})} 
+                            className="w-full p-2 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)]"
+                        />
+                    </div>
+                    <button type="submit" className="btn-primary w-full !mt-4">Submit Transaction</button>
+                </form>
+            </section>
+
+            <section className="glass-effect p-5 rounded-xl">
+                <h2 className="font-sans text-lg font-semibold text-[color:var(--aurea-text-primary)] mb-4">Create Poll Link</h2>
+                <form onSubmit={handlePollSubmit} className="space-y-4">
+                    <div>
+                        <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1.5">Question (for card title)</label>
+                        <input type="text" value={newPoll.question} onChange={e => setNewPoll({...newPoll, question: e.target.value})} required className="w-full p-2.5 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)]"/>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-[color:var(--aurea-text-secondary)] mb-1.5">Twitter Poll URL</label>
+                        <input type="url" value={newPoll.link} onChange={e => setNewPoll({...newPoll, link: e.target.value})} required placeholder="https://twitter.com/..." className="w-full p-2.5 rounded-md bg-white/5 border border-[color:var(--aurea-border)] text-[color:var(--aurea-text-primary)]"/>
+                    </div>
+                    <button type="submit" className="btn-primary w-full">Create Poll Link</button>
+                </form>
+            </section>
+        </div>
+    );
+};
+
+
+// #endregion
+
+// ================================================================================= //
+// #region 🚀 8. MAIN APP COMPONENT
+// ================================================================================= //
+
+function App() {
+  const [currentPage, setCurrentPage] = useState('login');
+  const [isPageFading, setIsPageFading] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  const navigateTo = useCallback((page: string) => {
+    if(page === currentPage && page !== 'admin' && !isPageFading) return;
+    
+    if (page === 'admin') {
+        setIsAdmin(true);
+    } else {
+        setIsAdmin(false);
+    }
+
+    setIsPageFading(true);
+    setTimeout(() => {
+      setCurrentPage(page);
+      window.scrollTo(0, 0);
+      setIsPageFading(false);
+    }, 300);
+  }, [currentPage, isPageFading]);
+  
+  const AppContent = () => {
+    const { isLoggedIn, user, logout } = useAuth();
+    
+    useEffect(() => {
+        if (!isAdmin && isLoggedIn && user) {
+            if (currentPage === 'login' || currentPage === 'home') {
+                 navigateTo(user.sportPreferences?.length > 0 ? 'chronicles' : 'welcome');
+            }
+        } else if (!isLoggedIn && !isAdmin && currentPage !== 'login') {
+            navigateTo('login');
+        }
+    }, [isLoggedIn, user, currentPage, navigateTo, isAdmin]);
+
+    const renderPage = () => {
+        if (isAdmin) return <AdminPage />;
+        if (!isLoggedIn) return <LoginScreen />;
+        
+        switch (currentPage) {
+            case 'welcome': return <HomePage onNavigate={navigateTo} />;
+            case 'chronicles': return <ChroniclesPage />;
+            case 'portal': return <PortalPage />;
+            case 'sanctuary': return <SanctuaryPage />;
+            case 'profile': return <ProfilePage />;
+            case 'login': return <LoginScreen />;
+            default: return <ChroniclesPage />;
+        }
+    };
+
+    return (
+      <div className="min-h-screen quantum-grid flex flex-col">
+        <GlobalStyles />
+        {isLoggedIn && !isAdmin && <Header currentPage={currentPage} onNavigate={navigateTo} />}
+        {isAdmin && <AdminHeader onLogout={() => { logout(); navigateTo('login'); }} />}
+        <main className={`flex-grow transition-opacity duration-300 ${isPageFading ? 'opacity-0' : 'opacity-100'} pt-20 pb-28`}>
+          {renderPage()}
+        </main>
+        {isLoggedIn && !isAdmin && currentPage !== 'welcome' && currentPage !== 'login' && <BottomNavigation activePage={currentPage} navigateTo={navigateTo} />}
+      </div>
+    );
+  };
+
+  const AdminHeader = ({ onLogout }: { onLogout: () => void }) => (
+    <header className="fixed top-0 left-0 right-0 z-50 glass-effect border-b border-transparent">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between items-center h-14">
+                <div className="flex items-center space-x-2">
+                    <AureaLogoIcon className="text-red-500 w-[22px] h-[22px]" />
+                    <span className="font-sans font-bold text-base text-red-400">Admin Nexus</span>
+                </div>
+                <button onClick={onLogout} className="btn-secondary">Logout</button>
+            </div>
+        </div>
+    </header>
+  );
+
+  return (
+    <NotificationsProvider>
+        <AuthProvider onAdminLogin={() => navigateTo('admin')}>
+            <DataProvider>
+                <AppContent />
+            </DataProvider>
+        </AuthProvider>
+    </NotificationsProvider>
+  );
+}
+export default App
